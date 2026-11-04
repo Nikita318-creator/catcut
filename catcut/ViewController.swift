@@ -10,7 +10,7 @@ import SnapKit
 // =====================================================================
 // MARK: - Theme & helpers
 // =====================================================================
- 
+
 enum Theme {
     static let background = UIColor(red: 18/255, green: 18/255, blue: 18/255, alpha: 1)
     static let panel = UIColor(white: 0.09, alpha: 1)
@@ -138,72 +138,6 @@ enum FilterType: Int, CaseIterable {
 }
 
 // =====================================================================
-// MARK: - Transitions
-// =====================================================================
-
-enum TransitionType: Int, CaseIterable {
-    case none, dissolve, fadeBlack, fadeWhite
-    case pushLeft, pushRight, pushUp, pushDown
-    case slideLeft, slideRight
-    case wipeLeft, wipeRight, wipeUp, wipeDown
-    case zoomIn, zoomOut, blur, spin, pixelate, bars, flash, mod
-
-    var title: String {
-        switch self {
-        case .none: return "Нет"
-        case .dissolve: return "Растворение"
-        case .fadeBlack: return "Через чёрный"
-        case .fadeWhite: return "Через белый"
-        case .pushLeft: return "Сдвиг ←"
-        case .pushRight: return "Сдвиг →"
-        case .pushUp: return "Сдвиг ↑"
-        case .pushDown: return "Сдвиг ↓"
-        case .slideLeft: return "Наезд ←"
-        case .slideRight: return "Наезд →"
-        case .wipeLeft: return "Шторка ←"
-        case .wipeRight: return "Шторка →"
-        case .wipeUp: return "Шторка ↑"
-        case .wipeDown: return "Шторка ↓"
-        case .zoomIn: return "Приближение"
-        case .zoomOut: return "Отдаление"
-        case .blur: return "Размытие"
-        case .spin: return "Вращение"
-        case .pixelate: return "Пиксели"
-        case .bars: return "Полосы"
-        case .flash: return "Вспышка"
-        case .mod: return "Узор"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .none: return "xmark"
-        case .dissolve: return "drop.halffull"
-        case .fadeBlack: return "moon.fill"
-        case .fadeWhite: return "sun.max.fill"
-        case .pushLeft: return "arrow.left"
-        case .pushRight: return "arrow.right"
-        case .pushUp: return "arrow.up"
-        case .pushDown: return "arrow.down"
-        case .slideLeft: return "chevron.left.2"
-        case .slideRight: return "chevron.right.2"
-        case .wipeLeft: return "backward.end.fill"
-        case .wipeRight: return "forward.end.fill"
-        case .wipeUp: return "chevron.compact.up"
-        case .wipeDown: return "chevron.compact.down"
-        case .zoomIn: return "plus.magnifyingglass"
-        case .zoomOut: return "minus.magnifyingglass"
-        case .blur: return "eye.slash"
-        case .spin: return "arrow.triangle.2.circlepath"
-        case .pixelate: return "square.grid.2x2.fill"
-        case .bars: return "list.bullet"
-        case .flash: return "bolt.fill"
-        case .mod: return "star.fill"
-        }
-    }
-}
-
-// =====================================================================
 // MARK: - Models
 // =====================================================================
 
@@ -216,7 +150,7 @@ struct VideoClip {
     var filter: FilterType = .none
     var filterIntensity: Float = 1.0
     /// Переход ПОСЛЕ этого клипа (между ним и следующим).
-    var transition: TransitionType = .none
+    var transitionID: Int = 0
     var transitionDuration: Double = 0.6
     var volume: Float = 1.0
 
@@ -257,7 +191,7 @@ struct TimelineLayout {
         durations = clips.map { $0.displayDuration }
 
         for i in 0..<clips.count {
-            if i < clips.count - 1, clips[i].transition != .none {
+            if i < clips.count - 1, clips[i].transitionID != 0 {
                 let maxAllowed = 0.5 * min(durations[i].secs, durations[i + 1].secs)
                 let d = min(clips[i].transitionDuration, maxAllowed)
                 overlapAfter.append(d >= 0.1 ? floorTicks(d) : .zero)
@@ -295,6 +229,761 @@ struct TimelineLayout {
         }
         if best == nil { return ts <= 0 ? 0 : starts.count - 1 }
         return best
+    }
+}
+
+// =====================================================================
+// MARK: - Transition catalog (3500+ переходов из «конструктора»)
+// =====================================================================
+//
+// Переход = БАЗА (сдвиг, шторка, ирис, жалюзи, шум, 3D…) + ЭФФЕКТ (размытие, RGB, вспышка…)
+// + КРИВАЯ СКОРОСТИ (плавно / линейно / резко / пружина).
+// Комбинации и дают тысячи вариантов. ID перехода = номер в каталоге (0 = нет перехода).
+
+enum TransitionCategory: Int, CaseIterable {
+    case all, fade, push, cover, wipe, shape, blinds, noise, zoom, flip3d, distort, pixel, glitch, light
+
+    var title: String {
+        switch self {
+        case .all: return "Все"
+        case .fade: return "Затемнение"
+        case .push: return "Сдвиг"
+        case .cover: return "Наезд"
+        case .wipe: return "Шторки"
+        case .shape: return "Фигуры"
+        case .blinds: return "Жалюзи"
+        case .noise: return "Шум"
+        case .zoom: return "Зум и вращение"
+        case .flip3d: return "3D"
+        case .distort: return "Искажения"
+        case .pixel: return "Пиксели"
+        case .glitch: return "Глитч"
+        case .light: return "Свет"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .fade: return "drop.halffull"
+        case .push: return "arrow.left.and.right"
+        case .cover: return "chevron.left.2"
+        case .wipe: return "forward.end.fill"
+        case .shape: return "circle.dashed"
+        case .blinds: return "list.bullet"
+        case .noise: return "sparkles"
+        case .zoom: return "arrow.triangle.2.circlepath"
+        case .flip3d: return "cube"
+        case .distort: return "tornado"
+        case .pixel: return "square.grid.3x3.fill"
+        case .glitch: return "bolt.horizontal.fill"
+        case .light: return "sun.max.fill"
+        }
+    }
+}
+
+enum Dir: CaseIterable {
+    case left, right, up, down, upLeft, upRight, downLeft, downRight
+
+    /// Куда едет картинка (система координат CoreImage: y вверх).
+    var vector: CGPoint {
+        switch self {
+        case .left: return CGPoint(x: -1, y: 0)
+        case .right: return CGPoint(x: 1, y: 0)
+        case .up: return CGPoint(x: 0, y: 1)
+        case .down: return CGPoint(x: 0, y: -1)
+        case .upLeft: return CGPoint(x: -1, y: 1)
+        case .upRight: return CGPoint(x: 1, y: 1)
+        case .downLeft: return CGPoint(x: -1, y: -1)
+        case .downRight: return CGPoint(x: 1, y: -1)
+        }
+    }
+
+    var arrow: String {
+        switch self {
+        case .left: return "←"
+        case .right: return "→"
+        case .up: return "↑"
+        case .down: return "↓"
+        case .upLeft: return "↖"
+        case .upRight: return "↗"
+        case .downLeft: return "↙"
+        case .downRight: return "↘"
+        }
+    }
+}
+
+enum Ease: CaseIterable {
+    case smooth, linear, snap, back
+
+    var title: String {
+        switch self {
+        case .smooth: return "плавно"
+        case .linear: return "линейно"
+        case .snap: return "резко"
+        case .back: return "пружина"
+        }
+    }
+
+    func apply(_ t: CGFloat) -> CGFloat {
+        let x = max(0, min(1, t))
+        switch self {
+        case .linear: return x
+        case .smooth: return x * x * (3 - 2 * x)
+        case .snap: return (1 - pow(2, -10 * x)) / (1 - pow(2, -10))
+        case .back:
+            let c1: CGFloat = 1.70158
+            let c3 = c1 + 1
+            return 1 + c3 * pow(x - 1, 3) + c1 * pow(x - 1, 2)
+        }
+    }
+}
+
+/// Дополнительный эффект «поверх» базового перехода (пульсирует в середине).
+enum Fx: CaseIterable {
+    case none, blur, zoomPulse, rgb, shake, flash, goldFlash, hue, saturate, tilt, zoomBlur
+
+    var suffix: String {
+        switch self {
+        case .none: return ""
+        case .blur: return " + размытие"
+        case .zoomPulse: return " + пульс"
+        case .rgb: return " + RGB"
+        case .shake: return " + тряска"
+        case .flash: return " + вспышка"
+        case .goldFlash: return " + золото"
+        case .hue: return " + цвета"
+        case .saturate: return " + сочность"
+        case .tilt: return " + наклон"
+        case .zoomBlur: return " + рывок"
+        }
+    }
+}
+
+enum MosaicKind { case pixel, hex, crystal }
+
+enum Base {
+    case dissolve
+    case dip(CIColor)
+    case push(Dir)
+    case cover(Dir)
+    case reveal(Dir)
+    case wipe(angle: CGFloat, soft: CGFloat)
+    case iris(inward: Bool, scaleX: CGFloat, soft: CGFloat, cx: CGFloat, cy: CGFloat)
+    case blinds(count: Int, angle: CGFloat, soft: CGFloat)
+    case grid(cells: Int, diagonal: Bool, sweep: Int)
+    case noise(grain: CGFloat, cloud: Bool, soft: CGFloat)
+    case slices(count: Int, vertical: Bool)
+    case doors(vertical: Bool, open: Bool)
+    case zoom(inward: Bool, strength: CGFloat)
+    case spin(cw: Bool, angle: CGFloat)
+    case flip(vertical: Bool)
+    case cube(left: Bool)
+    case twirl(cw: Bool, strength: CGFloat)
+    case bump(sign: CGFloat)
+    case pinch(sign: CGFloat)
+    case mosaic(MosaicKind, strength: CGFloat)
+}
+
+struct TransitionSpec {
+    let id: Int
+    let name: String
+    let category: TransitionCategory
+    let base: Base
+    let fx: Fx
+    let ease: Ease
+}
+
+enum TransitionCatalog {
+
+    static let all: [TransitionSpec] = build()
+
+    private static let byCategory: [TransitionCategory: [TransitionSpec]] = {
+        var d: [TransitionCategory: [TransitionSpec]] = [.all: all]
+        for c in TransitionCategory.allCases where c != .all { d[c] = all.filter { $0.category == c } }
+        return d
+    }()
+
+    static func spec(_ id: Int) -> TransitionSpec? {
+        guard id > 0, id <= all.count else { return nil }
+        return all[id - 1]
+    }
+
+    static func list(_ category: TransitionCategory) -> [TransitionSpec] {
+        byCategory[category] ?? all
+    }
+
+    private static func build() -> [TransitionSpec] {
+        typealias Entry = (String, Base, TransitionCategory, Ease)
+        var bases: [Entry] = []
+
+        // Затемнение / растворение
+        bases.append(("Растворение", .dissolve, .fade, .smooth))
+        let dips: [(String, CIColor)] = [
+            ("чёрный", CIColor(red: 0, green: 0, blue: 0)), ("белый", CIColor(red: 1, green: 1, blue: 1)),
+            ("красный", CIColor(red: 0.95, green: 0.15, blue: 0.2)), ("оранжевый", CIColor(red: 1, green: 0.55, blue: 0.1)),
+            ("жёлтый", CIColor(red: 1, green: 0.9, blue: 0.2)), ("зелёный", CIColor(red: 0.2, green: 0.85, blue: 0.35)),
+            ("бирюзовый", CIColor(red: 0.1, green: 0.85, blue: 0.85)), ("синий", CIColor(red: 0.15, green: 0.35, blue: 0.95)),
+            ("фиолетовый", CIColor(red: 0.55, green: 0.25, blue: 0.9)), ("розовый", CIColor(red: 1, green: 0.4, blue: 0.7)),
+            ("золотой", CIColor(red: 1, green: 0.78, blue: 0.3)), ("серый", CIColor(red: 0.5, green: 0.5, blue: 0.5)),
+            ("персик", CIColor(red: 1, green: 0.7, blue: 0.6)), ("мятный", CIColor(red: 0.6, green: 1, blue: 0.8))
+        ]
+        for (n, c) in dips { bases.append(("Через \(n)", .dip(c), .fade, .smooth)) }
+
+        // Сдвиг / наезд / уход × 8 направлений × 4 кривые
+        for d in Dir.allCases {
+            for e in Ease.allCases {
+                bases.append(("Сдвиг \(d.arrow) \(e.title)", .push(d), .push, e))
+                bases.append(("Наезд \(d.arrow) \(e.title)", .cover(d), .cover, e))
+                bases.append(("Уход \(d.arrow) \(e.title)", .reveal(d), .cover, e))
+            }
+        }
+
+        // Линейные шторки: 16 углов × 3 мягкости
+        let softs: [(String, CGFloat)] = [("чёткая", 0.03), ("мягкая", 0.3), ("туман", 0.9)]
+        for i in 0..<16 {
+            let deg = Double(i) * 22.5
+            let label = deg.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(deg))°" : String(format: "%.1f°", deg)
+            for (sn, s) in softs {
+                bases.append(("Шторка \(label) \(sn)", .wipe(angle: CGFloat(deg) * .pi / 180, soft: s), .wipe, .smooth))
+            }
+        }
+
+        // Ирисы / фигуры
+        let shapes: [(String, CGFloat)] = [("круг", 1.0), ("овал", 1.8), ("столб", 0.55)]
+        let centers: [(String, CGFloat, CGFloat)] = [("центр", 0.5, 0.5), ("↖", 0, 1), ("↗", 1, 1), ("↙", 0, 0), ("↘", 1, 0)]
+        for inward in [false, true] {
+            for (sn, sx) in shapes {
+                for soft in [(" чётко", CGFloat(0.03)), (" мягко", CGFloat(0.4))] {
+                    for (cn, cx, cy) in centers {
+                        bases.append(("\(inward ? "Сужение" : "Расширение") \(sn) \(cn)\(soft.0)",
+                                      .iris(inward: inward, scaleX: sx, soft: soft.1, cx: cx, cy: cy), .shape, .smooth))
+                    }
+                }
+            }
+        }
+
+        // Жалюзи
+        let bAngles: [(String, CGFloat)] = [("верт.", 0), ("гор.", .pi / 2), ("↗", .pi / 4), ("↖", 3 * .pi / 4)]
+        for count in [4, 8, 16, 32] {
+            for (an, a) in bAngles {
+                for (sn, s) in [("чётко", CGFloat(0.05)), ("мягко", CGFloat(0.5))] {
+                    bases.append(("Жалюзи \(count) \(an) \(sn)", .blinds(count: count, angle: a, soft: s), .blinds, .smooth))
+                }
+            }
+        }
+
+        // Сетки
+        let sweeps = ["разом", "волна →", "из центра"]
+        for cells in [4, 8, 16] {
+            for diag in [false, true] {
+                for sw in 0..<3 {
+                    bases.append(("Сетка \(cells) \(diag ? "ромбы" : "квадраты") \(sweeps[sw])",
+                                  .grid(cells: cells, diagonal: diag, sweep: sw), .blinds, .smooth))
+                }
+            }
+        }
+
+        // Шум
+        for (gn, g) in [("пыль", CGFloat(1)), ("зерно", 4), ("крупно", 10), ("блоки", 24)] {
+            for (sn, s) in [("чётко", CGFloat(0.03)), ("мягко", CGFloat(0.5))] {
+                bases.append(("Шум \(gn) \(sn)", .noise(grain: g, cloud: false, soft: s), .noise, .smooth))
+            }
+        }
+        for (cn, g) in [("S", CGFloat(30)), ("M", 70), ("L", 140)] {
+            bases.append(("Облака \(cn)", .noise(grain: g, cloud: true, soft: 0.35), .noise, .smooth))
+        }
+
+        // Полосы, двери
+        for count in [4, 8, 16] {
+            bases.append(("Полосы \(count) верт.", .slices(count: count, vertical: true), .blinds, .smooth))
+            bases.append(("Полосы \(count) гор.", .slices(count: count, vertical: false), .blinds, .smooth))
+        }
+        bases.append(("Двери верт. откр.", .doors(vertical: true, open: true), .wipe, .smooth))
+        bases.append(("Двери верт. закр.", .doors(vertical: true, open: false), .wipe, .smooth))
+        bases.append(("Двери гор. откр.", .doors(vertical: false, open: true), .wipe, .smooth))
+        bases.append(("Двери гор. закр.", .doors(vertical: false, open: false), .wipe, .smooth))
+
+        // Зум / вращение
+        for s in [CGFloat(0.25), 0.5, 0.9] { bases.append(("Приближение ×\(s)", .zoom(inward: true, strength: s), .zoom, .smooth)) }
+        for s in [CGFloat(0.25), 0.5, 0.7] { bases.append(("Отдаление ×\(s)", .zoom(inward: false, strength: s), .zoom, .smooth)) }
+        for cw in [true, false] {
+            for deg in [90, 180, 360] {
+                bases.append(("Вращение \(cw ? "↻" : "↺") \(deg)°", .spin(cw: cw, angle: CGFloat(deg) * .pi / 180), .zoom, .smooth))
+            }
+        }
+
+        // 3D
+        bases.append(("Переворот гор.", .flip(vertical: false), .flip3d, .smooth))
+        bases.append(("Переворот верт.", .flip(vertical: true), .flip3d, .smooth))
+        bases.append(("Куб ←", .cube(left: true), .flip3d, .smooth))
+        bases.append(("Куб →", .cube(left: false), .flip3d, .smooth))
+
+        // Искажения
+        for cw in [true, false] {
+            for (sn, s) in [("слабый", CGFloat(3)), ("сильный", 8)] {
+                bases.append(("Вихрь \(cw ? "↻" : "↺") \(sn)", .twirl(cw: cw, strength: s), .distort, .smooth))
+            }
+        }
+        bases.append(("Выпуклость", .bump(sign: 1), .distort, .smooth))
+        bases.append(("Вогнутость", .bump(sign: -1), .distort, .smooth))
+        bases.append(("Сжатие", .pinch(sign: 1), .distort, .smooth))
+        bases.append(("Растяжение", .pinch(sign: -1), .distort, .smooth))
+
+        // Мозаики
+        for (kn, k) in [("Пиксели", MosaicKind.pixel), ("Соты", .hex), ("Кристаллы", .crystal)] {
+            for (sn, s) in [("мелко", CGFloat(0.6)), ("крупно", 1.4)] {
+                bases.append(("\(kn) \(sn)", .mosaic(k, strength: s), .pixel, .smooth))
+            }
+        }
+
+        // Комбинируем: сначала «чистые» (fx = none), потом все с эффектами
+        var result: [TransitionSpec] = []
+        result.reserveCapacity(bases.count * Fx.allCases.count)
+        for fx in Fx.allCases {
+            for (name, base, cat, ease) in bases {
+                var category = cat
+                switch fx {
+                case .rgb, .shake: category = .glitch
+                case .flash, .goldFlash: category = .light
+                default: break
+                }
+                result.append(TransitionSpec(id: result.count + 1, name: name + fx.suffix, category: category,
+                                             base: base, fx: fx, ease: ease))
+            }
+        }
+        return result
+    }
+}
+
+// =====================================================================
+// MARK: - Transition renderer
+// =====================================================================
+
+enum TransitionRenderer {
+
+    static func render(id: Int, from: CIImage, to: CIImage, t: CGFloat, rect: CGRect) -> CIImage {
+        guard let spec = TransitionCatalog.spec(id) else { return t < 0.5 ? from : to }
+        let e = spec.ease.apply(t)
+        var out = renderBase(spec.base, from: from, to: to, e: e, rect: rect)
+        out = applyFx(spec.fx, out, t: t, rect: rect)
+        return out.composited(over: black(rect)).cropped(to: rect)
+    }
+
+    // MARK: Helpers
+
+    private static func black(_ r: CGRect) -> CIImage { CIImage(color: CIColor.black).cropped(to: r) }
+    private static func solid(_ c: CIColor, _ r: CGRect) -> CIImage { CIImage(color: c).cropped(to: r) }
+    private static func clamp01(_ x: CGFloat) -> CGFloat { max(0, min(1, x)) }
+
+    private static func opacity(_ image: CIImage, _ a: CGFloat) -> CIImage {
+        let a = clamp01(a)
+        guard a < 0.999 else { return image }
+        return image.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 1, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: a),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+        ])
+    }
+
+    private static func crossfade(_ a: CIImage, _ b: CIImage, _ t: CGFloat) -> CIImage {
+        opacity(b, t).composited(over: a)
+    }
+
+    private static func move(_ img: CIImage, _ x: CGFloat, _ y: CGFloat) -> CIImage {
+        img.transformed(by: CGAffineTransform(translationX: x, y: y))
+    }
+
+    private static func scaledXY(_ img: CIImage, _ sx: CGFloat, _ sy: CGFloat, _ r: CGRect) -> CIImage {
+        let t = CGAffineTransform(translationX: -r.midX, y: -r.midY)
+            .concatenating(CGAffineTransform(scaleX: max(0.001, sx), y: max(0.001, sy)))
+            .concatenating(CGAffineTransform(translationX: r.midX, y: r.midY))
+        return img.transformed(by: t)
+    }
+
+    private static func scaled(_ img: CIImage, _ s: CGFloat, _ r: CGRect) -> CIImage { scaledXY(img, s, s, r) }
+
+    private static func rotated(_ img: CIImage, angle: CGFloat, scale: CGFloat, _ r: CGRect) -> CIImage {
+        let t = CGAffineTransform(translationX: -r.midX, y: -r.midY)
+            .concatenating(CGAffineTransform(rotationAngle: angle))
+            .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+            .concatenating(CGAffineTransform(translationX: r.midX, y: r.midY))
+        return img.transformed(by: t)
+    }
+
+    private static func ciFilter(_ name: String, _ image: CIImage, _ params: [String: Any]) -> CIImage? {
+        guard let f = CIFilter(name: name) else { return nil }
+        f.setValue(image, forKey: kCIInputImageKey)
+        for (k, v) in params where f.inputKeys.contains(k) { f.setValue(v, forKey: k) }
+        return f.outputImage
+    }
+
+    private static func blurred(_ img: CIImage, sigma: CGFloat, _ r: CGRect) -> CIImage {
+        guard sigma > 0.5 else { return img }
+        return img.clampedToExtent().applyingGaussianBlur(sigma: Double(sigma)).cropped(to: r)
+    }
+
+    private static func vec(_ p: CGPoint) -> CIVector { CIVector(x: p.x, y: p.y) }
+
+    // MARK: Mask fields (поле «когда открывать этот пиксель»: 0 — сразу, 1 — в самом конце)
+
+    private static func threshold(_ g: CIImage, e: CGFloat, soft: CGFloat, _ r: CGRect) -> CIImage {
+        let s = max(0.001, soft)
+        let a = -1 / s
+        let bias = e * (1 + s) / s
+        return g
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                "inputBVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                "inputBiasVector": CIVector(x: bias, y: bias, z: bias, w: 0)
+            ])
+            .applyingFilter("CIColorClamp", parameters: [
+                "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)
+            ])
+            .cropped(to: r)
+    }
+
+    private static func revealWithMask(_ to: CIImage, over from: CIImage, mask: CIImage, _ r: CGRect) -> CIImage {
+        to.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: from,
+            kCIInputMaskImageKey: mask
+        ]).cropped(to: r)
+    }
+
+    private static func linearField(angle: CGFloat, _ r: CGRect) -> CIImage? {
+        guard let f = CIFilter(name: "CILinearGradient") else { return nil }
+        let dx = cos(angle), dy = sin(angle)
+        let len = abs(r.width * dx) + abs(r.height * dy)
+        f.setValue(CIVector(x: r.midX - dx * len / 2, y: r.midY - dy * len / 2), forKey: "inputPoint0")
+        f.setValue(CIVector(x: r.midX + dx * len / 2, y: r.midY + dy * len / 2), forKey: "inputPoint1")
+        f.setValue(CIColor.black, forKey: "inputColor0")
+        f.setValue(CIColor.white, forKey: "inputColor1")
+        return f.outputImage?.cropped(to: r)
+    }
+
+    private static func radialField(center: CGPoint, radius: CGFloat, invert: Bool, _ r: CGRect) -> CIImage? {
+        guard let f = CIFilter(name: "CIRadialGradient") else { return nil }
+        f.setValue(vec(center), forKey: "inputCenter")
+        f.setValue(0, forKey: "inputRadius0")
+        f.setValue(radius, forKey: "inputRadius1")
+        f.setValue(invert ? CIColor.white : CIColor.black, forKey: "inputColor0")
+        f.setValue(invert ? CIColor.black : CIColor.white, forKey: "inputColor1")
+        return f.outputImage?.cropped(to: r)
+    }
+
+    private static func stripeField(halfWidth: CGFloat, angle: CGFloat, _ r: CGRect) -> CIImage? {
+        guard let f = CIFilter(name: "CIStripesGenerator") else { return nil }
+        f.setValue(CIVector(x: r.midX, y: r.midY), forKey: "inputCenter")
+        f.setValue(CIColor.black, forKey: "inputColor0")
+        f.setValue(CIColor.white, forKey: "inputColor1")
+        f.setValue(max(2, halfWidth), forKey: "inputWidth")
+        f.setValue(0, forKey: "inputSharpness")
+        guard var img = f.outputImage else { return nil }
+        if angle != 0 {
+            let t = CGAffineTransform(translationX: -r.midX, y: -r.midY)
+                .concatenating(CGAffineTransform(rotationAngle: angle))
+                .concatenating(CGAffineTransform(translationX: r.midX, y: r.midY))
+            img = img.transformed(by: t)
+        }
+        return img.cropped(to: r)
+    }
+
+    private static func noiseField(grain: CGFloat, cloud: Bool, _ r: CGRect) -> CIImage? {
+        guard let rg = CIFilter(name: "CIRandomGenerator")?.outputImage else { return nil }
+        var g = rg.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)
+        ])
+        if grain > 1 {
+            if !cloud { g = g.samplingNearest() }          // блоки
+            g = g.transformed(by: CGAffineTransform(scaleX: grain, y: grain))   // билинейно → «облака»
+        }
+        if cloud {
+            let k: CGFloat = 1.8
+            g = g.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: k, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: k, y: 0, z: 0, w: 0),
+                "inputBVector": CIVector(x: k, y: 0, z: 0, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                "inputBiasVector": CIVector(x: 0.5 - 0.5 * k, y: 0.5 - 0.5 * k, z: 0.5 - 0.5 * k, w: 0)
+            ])
+        }
+        return g.applyingFilter("CIColorClamp", parameters: [
+            "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)
+        ]).cropped(to: r)
+    }
+
+    // MARK: Base effects
+
+    private static func renderBase(_ base: Base, from: CIImage, to: CIImage, e: CGFloat, rect: CGRect) -> CIImage {
+        let W = rect.width, H = rect.height
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let ec = clamp01(e)
+        let fallback = crossfade(from, to, ec)
+
+        switch base {
+
+        case .dissolve:
+            return fallback
+
+        case .dip(let color):
+            let bg = solid(color, rect)
+            return ec < 0.5 ? opacity(from, 1 - 2 * ec).composited(over: bg)
+                            : opacity(to, 2 * ec - 1).composited(over: bg)
+
+        case .push(let d):
+            let v = d.vector
+            return move(to, v.x * W * (e - 1), v.y * H * (e - 1))
+                .composited(over: move(from, v.x * W * e, v.y * H * e))
+
+        case .cover(let d):
+            let v = d.vector
+            return move(to, v.x * W * (e - 1), v.y * H * (e - 1)).composited(over: from)
+
+        case .reveal(let d):
+            let v = d.vector
+            return move(from, v.x * W * e, v.y * H * e).composited(over: to)
+
+        case .wipe(let angle, let soft):
+            guard let g = linearField(angle: angle, rect) else { return fallback }
+            return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: soft, rect), rect)
+
+        case .iris(let inward, let sx, let soft, let cx, let cy):
+            let center = CGPoint(x: cx * W, y: cy * H)
+            var R: CGFloat = 0
+            for corner in [CGPoint(x: 0, y: 0), CGPoint(x: W, y: 0), CGPoint(x: 0, y: H), CGPoint(x: W, y: H)] {
+                R = max(R, hypot((corner.x - center.x) / sx, corner.y - center.y))
+            }
+            guard var g = radialField(center: center, radius: max(1, R), invert: inward, rect.insetBy(dx: -W, dy: -H)) else { return fallback }
+            if sx != 1 {
+                let t = CGAffineTransform(translationX: -center.x, y: -center.y)
+                    .concatenating(CGAffineTransform(scaleX: sx, y: 1))
+                    .concatenating(CGAffineTransform(translationX: center.x, y: center.y))
+                g = g.transformed(by: t)
+            }
+            return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: soft, rect), rect)
+
+        case .blinds(let count, let angle, let soft):
+            guard let g = stripeField(halfWidth: W / CGFloat(2 * count), angle: angle, rect) else { return fallback }
+            return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: soft, rect), rect)
+
+        case .grid(let cells, let diagonal, let sweep):
+            let half = W / CGFloat(2 * cells)
+            let rot: CGFloat = diagonal ? .pi / 4 : 0
+            guard let gx = stripeField(halfWidth: half, angle: rot, rect),
+                  let gy = stripeField(halfWidth: half, angle: rot + .pi / 2, rect) else { return fallback }
+            var g = gx.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: gy]).cropped(to: rect)
+            if sweep == 1, let lin = linearField(angle: 0, rect) {
+                g = crossfade(g, lin, 0.5)
+            } else if sweep == 2, let rad = radialField(center: c, radius: hypot(W, H) / 2, invert: false, rect) {
+                g = crossfade(g, rad, 0.5)
+            }
+            return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: 0.12, rect), rect)
+
+        case .noise(let grain, let cloud, let soft):
+            guard let g = noiseField(grain: grain, cloud: cloud, rect) else { return fallback }
+            return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: soft, rect), rect)
+
+        case .slices(let count, let vertical):
+            var acc = to
+            for k in 0..<count {
+                let sign: CGFloat = k % 2 == 0 ? 1 : -1
+                let strip: CGRect
+                var dx: CGFloat = 0, dy: CGFloat = 0
+                if vertical {
+                    let w = W / CGFloat(count)
+                    strip = CGRect(x: CGFloat(k) * w, y: 0, width: w + 0.5, height: H)
+                    dy = sign * H * ec
+                } else {
+                    let h = H / CGFloat(count)
+                    strip = CGRect(x: 0, y: CGFloat(k) * h, width: W, height: h + 0.5)
+                    dx = sign * W * ec
+                }
+                acc = move(from.cropped(to: strip), dx, dy).composited(over: acc)
+            }
+            return acc
+
+        case .doors(let vertical, let open):
+            let src = open ? from : to
+            let bg = open ? to : from
+            let k = open ? ec : (1 - ec)
+            if vertical {
+                let l = move(src.cropped(to: CGRect(x: 0, y: 0, width: W / 2, height: H)), -W / 2 * k, 0)
+                let r = move(src.cropped(to: CGRect(x: W / 2, y: 0, width: W / 2, height: H)), W / 2 * k, 0)
+                return l.composited(over: r.composited(over: bg))
+            } else {
+                let b = move(src.cropped(to: CGRect(x: 0, y: 0, width: W, height: H / 2)), 0, -H / 2 * k)
+                let u = move(src.cropped(to: CGRect(x: 0, y: H / 2, width: W, height: H / 2)), 0, H / 2 * k)
+                return b.composited(over: u.composited(over: bg))
+            }
+
+        case .zoom(let inward, let s):
+            if inward {
+                return crossfade(scaled(from, 1 + s * ec, rect), scaled(to, 1 + s * (1 - ec), rect), ec)
+            } else {
+                let under = scaled(to, 1 + 0.75 * s * (1 - ec), rect)
+                let top = opacity(scaled(from, 1 - 0.8 * s * ec, rect), 1 - ec)
+                return top.composited(over: under)
+            }
+
+        case .spin(let cw, let angle):
+            let sign: CGFloat = cw ? -1 : 1
+            let f = rotated(from, angle: sign * angle * ec, scale: 1 + 0.6 * ec, rect)
+            let t = rotated(to, angle: -sign * angle * (1 - ec), scale: 1 + 0.6 * (1 - ec), rect)
+            return crossfade(f.composited(over: black(rect)), t.composited(over: black(rect)), ec)
+
+        case .flip(let vertical):
+            let useFrom = ec < 0.5
+            let img = useFrom ? from : to
+            let k = abs(cos((useFrom ? ec : (1 - ec)) * .pi))
+            return vertical ? scaledXY(img, 1, k, rect) : scaledXY(img, k, 1, rect)
+
+        case .cube(let left):
+            func cubeLeft(_ a: CIImage, _ b: CIImage) -> CIImage {
+                let cy = H / 2
+                let seam = H * (1 + 0.12 * sin(ec * .pi))
+                let fromOuter = H * (1 - 0.3 * ec)
+                let toOuter = H * (1 - 0.3 * (1 - ec))
+                let xs = W * (1 - ec)
+                func face(_ img: CIImage, tl: CGPoint, tr: CGPoint, br: CGPoint, bl: CGPoint) -> CIImage {
+                    ciFilter("CIPerspectiveTransform", img.cropped(to: rect), [
+                        "inputTopLeft": vec(tl), "inputTopRight": vec(tr),
+                        "inputBottomRight": vec(br), "inputBottomLeft": vec(bl)
+                    ]) ?? img
+                }
+                if xs < 2 { return b }
+                if W - xs < 2 { return a }
+                let fa = face(a, tl: CGPoint(x: 0, y: cy + fromOuter / 2), tr: CGPoint(x: xs, y: cy + seam / 2),
+                              br: CGPoint(x: xs, y: cy - seam / 2), bl: CGPoint(x: 0, y: cy - fromOuter / 2))
+                let fb = face(b, tl: CGPoint(x: xs, y: cy + seam / 2), tr: CGPoint(x: W, y: cy + toOuter / 2),
+                              br: CGPoint(x: W, y: cy - toOuter / 2), bl: CGPoint(x: xs, y: cy - seam / 2))
+                return fb.composited(over: fa)
+            }
+            func flipX(_ img: CIImage) -> CIImage {
+                img.transformed(by: CGAffineTransform(scaleX: -1, y: 1).concatenating(CGAffineTransform(translationX: W, y: 0)))
+            }
+            return left ? cubeLeft(from, to) : flipX(cubeLeft(flipX(from), flipX(to)))
+
+        case .twirl(let cw, let s):
+            let sign: CGFloat = cw ? 1 : -1
+            let R = hypot(W, H) * 0.6
+            func tw(_ img: CIImage, _ a: CGFloat) -> CIImage {
+                ciFilter("CITwirlDistortion", img.clampedToExtent(), [
+                    "inputCenter": vec(c), "inputRadius": R, "inputAngle": a
+                ])?.cropped(to: rect) ?? img
+            }
+            return crossfade(tw(from, sign * s * ec), tw(to, -sign * s * (1 - ec)), ec)
+
+        case .bump(let sign):
+            let R = min(W, H) * 0.7
+            func bp(_ img: CIImage, _ a: CGFloat) -> CIImage {
+                ciFilter("CIBumpDistortion", img.clampedToExtent(), [
+                    "inputCenter": vec(c), "inputRadius": R, "inputScale": a
+                ])?.cropped(to: rect) ?? img
+            }
+            return crossfade(bp(from, sign * 1.6 * ec), bp(to, sign * 1.6 * (1 - ec)), ec)
+
+        case .pinch(let sign):
+            let R = min(W, H) * 0.8
+            func pn(_ img: CIImage, _ a: CGFloat) -> CIImage {
+                ciFilter("CIPinchDistortion", img.clampedToExtent(), [
+                    "inputCenter": vec(c), "inputRadius": R, "inputScale": a
+                ])?.cropped(to: rect) ?? img
+            }
+            return crossfade(pn(from, sign * 1.5 * ec), pn(to, sign * 1.5 * (1 - ec)), ec)
+
+        case .mosaic(let kind, let strength):
+            let amount = sin(ec * .pi) * strength * min(W, H) * 0.06
+            func mo(_ img: CIImage) -> CIImage {
+                guard amount > 1.5 else { return img }
+                let src = img.clampedToExtent()
+                let out: CIImage?
+                switch kind {
+                case .pixel: out = ciFilter("CIPixellate", src, ["inputScale": amount, "inputCenter": CIVector(x: 0, y: 0)])
+                case .hex: out = ciFilter("CIHexagonalPixellate", src, ["inputScale": amount, "inputCenter": CIVector(x: 0, y: 0)])
+                case .crystal: out = ciFilter("CICrystallize", src, ["inputRadius": amount * 0.8, "inputCenter": CIVector(x: 0, y: 0)])
+                }
+                return out?.cropped(to: rect) ?? img
+            }
+            return crossfade(mo(from), mo(to), ec)
+        }
+    }
+
+    // MARK: Post effects
+
+    private static func applyFx(_ fx: Fx, _ img: CIImage, t: CGFloat, rect: CGRect) -> CIImage {
+        let W = rect.width, H = rect.height
+        let s = sin(clamp01(t) * .pi)       // 0 → 1 → 0
+        guard s > 0.001 else { return img }
+
+        func addColor(_ c: CIColor, _ amount: CGFloat) -> CIImage {
+            let overlay = solid(CIColor(red: c.red * amount, green: c.green * amount, blue: c.blue * amount, alpha: 1), rect)
+            return overlay.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: img]).cropped(to: rect)
+        }
+
+        switch fx {
+        case .none:
+            return img
+
+        case .blur:
+            return blurred(img, sigma: s * min(W, H) * 0.025, rect)
+
+        case .zoomPulse:
+            return scaled(img, 1 + 0.18 * s, rect)
+
+        case .rgb:
+            let d = s * W * 0.03
+            func channel(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CIImage {
+                img.applyingFilter("CIColorMatrix", parameters: [
+                    "inputRVector": CIVector(x: r, y: 0, z: 0, w: 0),
+                    "inputGVector": CIVector(x: 0, y: g, z: 0, w: 0),
+                    "inputBVector": CIVector(x: 0, y: 0, z: b, w: 0),
+                    "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                    "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+                ])
+            }
+            let red = move(channel(1, 0, 0), d, 0)
+            let green = channel(0, 1, 0)
+            let blue = move(channel(0, 0, 1), -d, 0)
+            let rg = green.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: red])
+            return blue.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: rg]).cropped(to: rect)
+
+        case .shake:
+            let big = scaled(img, 1.07, rect)
+            return move(big, sin(t * 45) * s * W * 0.03, cos(t * 33) * s * H * 0.012)
+
+        case .flash:
+            return addColor(CIColor(red: 1, green: 1, blue: 1), s * s * 0.95)
+
+        case .goldFlash:
+            return addColor(CIColor(red: 1, green: 0.78, blue: 0.35), s * s * 0.9)
+
+        case .hue:
+            return img.applyingFilter("CIHueAdjustment", parameters: [kCIInputAngleKey: s * 3.0])
+
+        case .saturate:
+            return img.applyingFilter("CIColorControls", parameters: [
+                kCIInputSaturationKey: 1 + 1.6 * s, kCIInputContrastKey: 1 + 0.2 * s
+            ])
+
+        case .tilt:
+            return rotated(img, angle: s * 0.12, scale: 1 + 0.15 * s, rect)
+
+        case .zoomBlur:
+            let blurredImg = ciFilter("CIZoomBlur", img.clampedToExtent(), [
+                "inputCenter": CIVector(x: rect.midX, y: rect.midY), "inputAmount": s * 45
+            ])?.cropped(to: rect)
+            return blurredImg ?? img
+        }
     }
 }
 
@@ -456,14 +1145,14 @@ final class EditorInstruction: NSObject, AVVideoCompositionInstructionProtocol {
 
     let from: LayerInfo
     let to: LayerInfo?
-    let transition: TransitionType
+    let transitionID: Int
     let texts: [TextOverlay]
 
-    init(timeRange: CMTimeRange, from: LayerInfo, to: LayerInfo?, transition: TransitionType, texts: [TextOverlay]) {
+    init(timeRange: CMTimeRange, from: LayerInfo, to: LayerInfo?, transitionID: Int, texts: [TextOverlay]) {
         self.timeRange = timeRange
         self.from = from
         self.to = to
-        self.transition = transition
+        self.transitionID = transitionID
         self.texts = texts
         var ids: [NSValue] = [NSNumber(value: from.trackID)]
         if let to = to { ids.append(NSNumber(value: to.trackID)) }
@@ -520,9 +1209,8 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
                     let b = self.frame(for: toLayer, request: request, rect: rect)
                     let start = instruction.timeRange.start.secs
                     let dur = max(0.001, instruction.timeRange.duration.secs)
-                    var p = CGFloat(min(1, max(0, (time - start) / dur)))
-                    p = p * p * (3 - 2 * p) // плавное ускорение/замедление
-                    output = self.transitionImage(instruction.transition, from: a, to: b, p: p, rect: rect)
+                    let p = CGFloat(min(1, max(0, (time - start) / dur)))
+                    output = TransitionRenderer.render(id: instruction.transitionID, from: a, to: b, t: p, rect: rect)
                 } else {
                     output = self.frame(for: instruction.from, request: request, rect: rect)
                 }
@@ -589,135 +1277,6 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
         ])
     }
 
-    // MARK: Transitions
-
-    private func transitionImage(_ type: TransitionType, from: CIImage, to: CIImage, p: CGFloat, rect: CGRect) -> CIImage {
-        let W = rect.width, H = rect.height
-        let blackBG = black(rect)
-
-        func move(_ img: CIImage, _ x: CGFloat, _ y: CGFloat) -> CIImage {
-            img.transformed(by: CGAffineTransform(translationX: x, y: y))
-        }
-        func scaled(_ img: CIImage, _ s: CGFloat) -> CIImage {
-            let t = CGAffineTransform(translationX: -W / 2, y: -H / 2)
-                .concatenating(CGAffineTransform(scaleX: s, y: s))
-                .concatenating(CGAffineTransform(translationX: W / 2, y: H / 2))
-            return img.transformed(by: t)
-        }
-        func rotated(_ img: CIImage, angle: CGFloat, scale: CGFloat) -> CIImage {
-            let t = CGAffineTransform(translationX: -W / 2, y: -H / 2)
-                .concatenating(CGAffineTransform(rotationAngle: angle))
-                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
-                .concatenating(CGAffineTransform(translationX: W / 2, y: H / 2))
-            return img.transformed(by: t)
-        }
-        func crossfade(_ a: CIImage, _ b: CIImage, _ t: CGFloat) -> CIImage {
-            opacity(b, t).composited(over: a)
-        }
-        func ciTransition(_ name: String, extra: [String: Any] = [:]) -> CIImage? {
-            guard let f = CIFilter(name: name) else { return nil }
-            var params: [String: Any] = [
-                kCIInputImageKey: from,
-                kCIInputTargetImageKey: to,
-                kCIInputTimeKey: p,
-                kCIInputCenterKey: CIVector(x: rect.midX, y: rect.midY),
-                kCIInputExtentKey: CIVector(cgRect: rect)
-            ]
-            for (k, v) in extra { params[k] = v }
-            for (k, v) in params where f.inputKeys.contains(k) { f.setValue(v, forKey: k) }
-            return f.outputImage?.cropped(to: rect)
-        }
-
-        let result: CIImage
-        switch type {
-        case .none:
-            result = p < 0.5 ? from : to
-
-        case .dissolve:
-            result = crossfade(from, to, p)
-
-        case .fadeBlack:
-            result = p < 0.5 ? opacity(from, 1 - 2 * p).composited(over: blackBG)
-                             : opacity(to, 2 * p - 1).composited(over: blackBG)
-
-        case .fadeWhite:
-            let white = CIImage(color: CIColor.white).cropped(to: rect)
-            result = p < 0.5 ? opacity(from, 1 - 2 * p).composited(over: white)
-                             : opacity(to, 2 * p - 1).composited(over: white)
-
-        case .pushLeft:
-            result = move(to, W * (1 - p), 0).composited(over: move(from, -W * p, 0))
-        case .pushRight:
-            result = move(to, -W * (1 - p), 0).composited(over: move(from, W * p, 0))
-        case .pushUp:
-            result = move(to, 0, -H * (1 - p)).composited(over: move(from, 0, H * p))
-        case .pushDown:
-            result = move(to, 0, H * (1 - p)).composited(over: move(from, 0, -H * p))
-
-        case .slideLeft:
-            result = move(to, W * (1 - p), 0).composited(over: from)
-        case .slideRight:
-            result = move(to, -W * (1 - p), 0).composited(over: from)
-
-        case .wipeLeft:
-            result = to.cropped(to: CGRect(x: W * (1 - p), y: 0, width: W * p, height: H)).composited(over: from)
-        case .wipeRight:
-            result = to.cropped(to: CGRect(x: 0, y: 0, width: W * p, height: H)).composited(over: from)
-        case .wipeUp:
-            result = to.cropped(to: CGRect(x: 0, y: 0, width: W, height: H * p)).composited(over: from)
-        case .wipeDown:
-            result = to.cropped(to: CGRect(x: 0, y: H * (1 - p), width: W, height: H * p)).composited(over: from)
-
-        case .zoomIn:
-            let f = scaled(from, 1 + 0.4 * p)
-            let t = scaled(to, 1.4 - 0.4 * p)
-            result = crossfade(f, t, p)
-
-        case .zoomOut:
-            let under = scaled(to, 1.3 - 0.3 * p)
-            let top = opacity(scaled(from, 1 - 0.4 * p), 1 - p)
-            result = top.composited(over: under)
-
-        case .blur:
-            let amount = sin(p * .pi) * min(W, H) * 0.03
-            func blurred(_ img: CIImage) -> CIImage {
-                guard amount > 0.5 else { return img }
-                return img.clampedToExtent().applyingGaussianBlur(sigma: Double(amount)).cropped(to: rect)
-            }
-            result = crossfade(blurred(from), blurred(to), p)
-
-        case .spin:
-            let f = rotated(from, angle: -p * 0.5, scale: 1 + 0.5 * p)
-            let t = rotated(to, angle: (1 - p) * 0.5, scale: 1 + 0.5 * (1 - p))
-            result = crossfade(f.composited(over: blackBG), t.composited(over: blackBG), p)
-
-        case .pixelate:
-            let mp = 1 - abs(2 * p - 1) // 0 -> 1 -> 0
-            let block = mp * min(W, H) * 0.07
-            func pix(_ img: CIImage) -> CIImage {
-                guard block > 1.5 else { return img }
-                return img.clampedToExtent()
-                    .applyingFilter("CIPixellate", parameters: [kCIInputScaleKey: block,
-                                                                 kCIInputCenterKey: CIVector(x: 0, y: 0)])
-                    .cropped(to: rect)
-            }
-            result = crossfade(pix(from), pix(to), p)
-
-        case .bars:
-            result = ciTransition("CIBarsSwipeTransition",
-                                  extra: [kCIInputAngleKey: 0.0, kCIInputWidthKey: W * 0.08, "inputBarOffset": W * 0.03])
-                ?? crossfade(from, to, p)
-
-        case .flash:
-            result = ciTransition("CIFlashTransition", extra: [kCIInputColorKey: CIColor.white])
-                ?? crossfade(from, to, p)
-
-        case .mod:
-            result = ciTransition("CIModTransition", extra: [kCIInputRadiusKey: min(W, H) * 0.15])
-                ?? crossfade(from, to, p)
-        }
-        return result.composited(over: blackBG).cropped(to: rect)
-    }
 }
 
 // =====================================================================
@@ -857,10 +1416,10 @@ final class EditorBuild {
             let range = CMTimeRange(start: seg.0, end: e)
             switch seg.2 {
             case .solo(let i):
-                instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: nil, transition: .none, texts: texts))
+                instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: nil, transitionID: 0, texts: texts))
             case .trans(let i):
                 instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: layer(i + 1),
-                                                      transition: clips[i].transition, texts: texts))
+                                                      transitionID: clips[i].transitionID, texts: texts))
             }
         }
 
@@ -1133,7 +1692,8 @@ final class TimelineView: UIView, UIScrollViewDelegate {
                 let cx = side + CGFloat(layout.starts[j + 1].secs) * pps
                 let f = CGRect(x: cx - 13, y: clipTop + clipHeight / 2 - 13, width: 26, height: 26)
                 transitionFrames.append(f)
-                let has = clips[j].transition != .none
+                let tSpec = TransitionCatalog.spec(clips[j].transitionID)
+                let has = tSpec != nil
                 let v = UIView(frame: f)
                 v.backgroundColor = has ? Theme.accent : UIColor(white: 0.95, alpha: 0.95)
                 v.layer.cornerRadius = 13
@@ -1141,7 +1701,7 @@ final class TimelineView: UIView, UIScrollViewDelegate {
                 v.layer.shadowOpacity = 0.4
                 v.layer.shadowRadius = 3
                 v.layer.shadowOffset = .zero
-                let icon = UIImageView(image: UIImage(systemName: has ? clips[j].transition.symbol : "rectangle.on.rectangle"))
+                let icon = UIImageView(image: UIImage(systemName: tSpec?.category.symbol ?? "rectangle.on.rectangle"))
                 icon.tintColor = .black
                 icon.contentMode = .scaleAspectFit
                 icon.frame = CGRect(x: 5, y: 5, width: 16, height: 16)
@@ -1271,8 +1831,9 @@ final class PanelItemCell: UICollectionViewCell {
         titleLabel.font = .systemFont(ofSize: 10, weight: .medium)
         titleLabel.textColor = .lightGray
         titleLabel.textAlignment = .center
+        titleLabel.numberOfLines = 2
         titleLabel.adjustsFontSizeToFitWidth = true
-        titleLabel.minimumScaleFactor = 0.7
+        titleLabel.minimumScaleFactor = 0.8
         contentView.addSubview(titleLabel)
 
         box.snp.makeConstraints { make in
@@ -1305,6 +1866,56 @@ final class PanelItemCell: UICollectionViewCell {
     }
 }
 
+final class ChipsView: UIView {
+    private let scroll = UIScrollView()
+    private let stack = UIStackView()
+    private var buttons: [UIButton] = []
+    var onSelect: ((Int) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        scroll.showsHorizontalScrollIndicator = false
+        addSubview(scroll)
+        scroll.snp.makeConstraints { $0.edges.equalToSuperview() }
+        stack.axis = .horizontal
+        stack.spacing = 8
+        scroll.addSubview(stack)
+        stack.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(UIEdgeInsets(top: 3, left: 14, bottom: 3, right: 14))
+            make.height.equalToSuperview().offset(-6)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(titles: [String], selected: Int) {
+        if buttons.count != titles.count {
+            buttons.forEach { $0.removeFromSuperview() }
+            buttons = titles.enumerated().map { (i, t) -> UIButton in
+                let b = UIButton(type: .system)
+                b.setTitle(t, for: .normal)
+                b.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
+                b.layer.cornerRadius = 13
+                b.contentEdgeInsets = UIEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
+                b.tag = i
+                b.addTarget(self, action: #selector(tapped(_:)), for: .touchUpInside)
+                stack.addArrangedSubview(b)
+                return b
+            }
+        }
+        for (i, b) in buttons.enumerated() {
+            let on = i == selected
+            b.backgroundColor = on ? Theme.accent : Theme.surface
+            b.setTitleColor(on ? .black : .white, for: .normal)
+        }
+        if selected < buttons.count {
+            let f = buttons[selected].frame
+            scroll.scrollRectToVisible(f.insetBy(dx: -30, dy: 0), animated: false)
+        }
+    }
+
+    @objc private func tapped(_ b: UIButton) { onSelect?(b.tag) }
+}
+
 final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewDelegate {
 
     private let titleLabel = UILabel()
@@ -1319,13 +1930,19 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
     private var selectedIndex: Int?
     private var sliderConfig: SliderConfig?
 
+    private let extraButton = UIButton(type: .system)
+    private let chipsView = ChipsView()
+    private var hasChips = false
+
     var onClose: (() -> Void)?
+    var onExtra: (() -> Void)?
+    var onChip: ((Int) -> Void)?
     var onSelect: ((Int) -> Void)?
     var onSliderBegan: (() -> Void)?
     var onSliderChanged: ((Float) -> Void)?
     var onSliderEnded: ((Float) -> Void)?
 
-    var preferredHeight: CGFloat { sliderConfig == nil ? 130 : 166 }
+    var preferredHeight: CGFloat { 38 + 106 + (sliderConfig == nil ? 0 : 34) + (hasChips ? 36 : 0) }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1349,7 +1966,7 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
 
         let layout = UICollectionViewFlowLayout()
         layout.scrollDirection = .horizontal
-        layout.itemSize = CGSize(width: 64, height: 82)
+        layout.itemSize = CGSize(width: 66, height: 96)
         layout.minimumLineSpacing = 8
         layout.sectionInset = UIEdgeInsets(top: 4, left: 14, bottom: 0, right: 14)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
@@ -1362,9 +1979,19 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         let header = UIView()
         header.addSubview(titleLabel)
         header.addSubview(closeButton)
+        extraButton.setTitleColor(Theme.accent, for: .normal)
+        extraButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        extraButton.addTarget(self, action: #selector(extraTapped), for: .touchUpInside)
+        extraButton.isHidden = true
+        header.addSubview(extraButton)
+        extraButton.snp.makeConstraints { make in
+            make.trailing.equalTo(closeButton.snp.leading).offset(-4)
+            make.centerY.equalToSuperview()
+        }
         titleLabel.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(16)
             make.centerY.equalToSuperview()
+            make.trailing.lessThanOrEqualTo(extraButton.snp.leading).offset(-8)
         }
         closeButton.snp.makeConstraints { make in
             make.trailing.equalToSuperview().inset(8)
@@ -1391,16 +2018,20 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
             make.centerY.equalToSuperview()
         }
 
-        let stack = UIStackView(arrangedSubviews: [header, sliderRow, collectionView])
+        let stack = UIStackView(arrangedSubviews: [header, chipsView, sliderRow, collectionView])
         stack.axis = .vertical
         addSubview(stack)
         stack.snp.makeConstraints { $0.edges.equalToSuperview() }
         header.snp.makeConstraints { $0.height.equalTo(38) }
         sliderRow.snp.makeConstraints { $0.height.equalTo(34) }
+        chipsView.snp.makeConstraints { $0.height.equalTo(36) }
+        chipsView.isHidden = true
+        chipsView.onSelect = { [weak self] i in self?.onChip?(i) }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(title: String, items: [PanelItem], selected: Int?, slider cfg: SliderConfig?) {
+    func configure(title: String, items: [PanelItem], selected: Int?, slider cfg: SliderConfig?,
+                   chips: [String]? = nil, selectedChip: Int = 0, extra: String? = nil, keepScroll: Bool = true) {
         titleLabel.text = title
         self.items = items
         self.selectedIndex = selected
@@ -1413,12 +2044,24 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
             slider.value = cfg.value
             sliderValue.text = cfg.format(cfg.value)
         }
+        hasChips = (chips != nil)
+        chipsView.isHidden = (chips == nil)
+        if let chips = chips { chipsView.configure(titles: chips, selected: selectedChip) }
+        extraButton.isHidden = (extra == nil)
+        extraButton.setTitle(extra, for: .normal)
+
         collectionView.reloadData()
-        if let s = selected, s < items.count {
-            collectionView.scrollToItem(at: IndexPath(item: s, section: 0), at: .centeredHorizontally, animated: false)
+        if !keepScroll {
+            collectionView.layoutIfNeeded()
+            if let s = selected, s < items.count {
+                collectionView.scrollToItem(at: IndexPath(item: s, section: 0), at: .centeredHorizontally, animated: false)
+            } else {
+                collectionView.setContentOffset(.zero, animated: false)
+            }
         }
     }
 
+    @objc private func extraTapped() { onExtra?() }
     @objc private func closeTapped() { onClose?() }
     @objc private func sliderDown() { onSliderBegan?() }
     @objc private func sliderMoved() {
@@ -1602,6 +2245,7 @@ final class ViewController: UIViewController {
 
     private var activePanel: PanelKind?
     private var transitionBoundary = 0
+    private var transitionCategory: TransitionCategory = .all
     private var filterPreviews: [FilterType: UIImage] = [:]
     private var filterPreviewClipID: UUID?
 
@@ -1825,6 +2469,12 @@ final class ViewController: UIViewController {
 
         panel.onClose = { [weak self] in self?.closePanel() }
         panel.onSelect = { [weak self] index in self?.handlePanelSelect(index) }
+        panel.onChip = { [weak self] index in
+            guard let self = self else { return }
+            self.transitionCategory = TransitionCategory.allCases[index]
+            self.refreshActivePanel(keepScroll: false)
+        }
+        panel.onExtra = { [weak self] in self?.applyTransitionToAll() }
         panel.onSliderBegan = { [weak self] in self?.sliderBegan() }
         panel.onSliderChanged = { [weak self] v in self?.sliderChanged(v) }
         panel.onSliderEnded = { [weak self] v in self?.sliderEnded(v) }
@@ -2135,7 +2785,7 @@ final class ViewController: UIViewController {
 
         var first = clip
         first.sourceRange = CMTimeRange(start: clip.sourceRange.start, duration: srcOffset)
-        first.transition = .none
+        first.transitionID = 0
 
         var second = clip   // у второй половины свой id → свои независимые фильтр/переход/скорость
         second.id = UUID()
@@ -2172,7 +2822,7 @@ final class ViewController: UIViewController {
         pushUndo()
         var copy = clips[i]
         copy.id = UUID()
-        copy.transition = .none
+        copy.transitionID = 0
         clips.insert(copy, at: i + 1)
         selectedClipIndex = i + 1
         rebuild()
@@ -2185,7 +2835,7 @@ final class ViewController: UIViewController {
         if kind == .filter { updateFilterPreviews() }
         toolCollection.isHidden = true
         panel.isHidden = false
-        refreshActivePanel()
+        refreshActivePanel(keepScroll: false)
     }
 
     private func closePanel() {
@@ -2201,7 +2851,7 @@ final class ViewController: UIViewController {
         UIView.animate(withDuration: 0.25) { self.view.layoutIfNeeded() }
     }
 
-    private func refreshActivePanel() {
+    private func refreshActivePanel(keepScroll: Bool = true) {
         guard let kind = activePanel else { return }
 
         switch kind {
@@ -2222,13 +2872,20 @@ final class ViewController: UIViewController {
             guard clips.count >= 2 else { closePanel(); return }
             let j = min(transitionBoundary, clips.count - 2)
             transitionBoundary = j
-            let items = TransitionType.allCases.map { PanelItem(title: $0.title, symbol: $0.symbol) }
-            let sel = TransitionType.allCases.firstIndex(of: clips[j].transition)
+            let list = TransitionCatalog.list(transitionCategory)
+            var items = [PanelItem(title: "Нет", symbol: "xmark"), PanelItem(title: "Случайный", symbol: "shuffle")]
+            items += list.map { PanelItem(title: $0.name, symbol: $0.category.symbol) }
+            let curID = clips[j].transitionID
+            let sel: Int? = curID == 0 ? 0 : list.firstIndex(where: { $0.id == curID }).map { $0 + 2 }
             let cfg = SliderConfig(title: "Длительность", min: 0.2, max: 1.5, value: Float(clips[j].transitionDuration)) {
                 String(format: "%.1fс", Double($0))
             }
-            panel.configure(title: "Переход · клип \(j + 1) → \(j + 2)", items: items, selected: sel,
-                            slider: clips[j].transition == .none ? nil : cfg)
+            let curName = TransitionCatalog.spec(curID)?.name ?? "нет"
+            panel.configure(title: "\(j + 1)→\(j + 2) · \(curName)", items: items, selected: sel,
+                            slider: curID == 0 ? nil : cfg,
+                            chips: TransitionCategory.allCases.map { "\($0.title) \(TransitionCatalog.list($0).count)" },
+                            selectedChip: transitionCategory.rawValue,
+                            extra: curID == 0 ? nil : "Ко всем", keepScroll: keepScroll)
 
         case .text:
             var items = [
@@ -2284,7 +2941,14 @@ final class ViewController: UIViewController {
             guard clips.count >= 2 else { return }
             let j = min(transitionBoundary, clips.count - 2)
             pushUndo()
-            clips[j].transition = TransitionType.allCases[index]
+            let list = TransitionCatalog.list(transitionCategory)
+            if index == 0 {
+                clips[j].transitionID = 0
+            } else if index == 1 {
+                clips[j].transitionID = list.randomElement()?.id ?? 0
+            } else if index - 2 < list.count {
+                clips[j].transitionID = list[index - 2].id
+            }
             rebuild()
             refreshActivePanel()
             previewTransition(j)
@@ -2366,6 +3030,21 @@ final class ViewController: UIViewController {
         default:
             reloadTimeline()
         }
+    }
+
+    private func applyTransitionToAll() {
+        guard clips.count >= 2 else { return }
+        let j = min(transitionBoundary, clips.count - 2)
+        pushUndo()
+        let id = clips[j].transitionID
+        let dur = clips[j].transitionDuration
+        for k in 0..<(clips.count - 1) {
+            clips[k].transitionID = id
+            clips[k].transitionDuration = dur
+        }
+        rebuild()
+        refreshActivePanel()
+        showToast("Переход применён ко всем стыкам")
     }
 
     /// Показываем переход: перематываем чуть назад и проигрываем.
