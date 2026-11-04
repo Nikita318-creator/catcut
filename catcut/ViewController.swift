@@ -17,6 +17,7 @@ enum Theme {
     static let surface = UIColor(white: 0.18, alpha: 1)
     static let accent = UIColor(red: 0.18, green: 0.85, blue: 0.80, alpha: 1)
     static let textBar = UIColor(red: 0.45, green: 0.35, blue: 0.85, alpha: 1)
+    static let audio = UIColor(red: 0.10, green: 0.50, blue: 0.46, alpha: 1)
 }
 
 /// Всё время внутри редактора живёт в одной шкале (600 тиков/сек),
@@ -144,12 +145,14 @@ enum FilterType: Int, CaseIterable {
 struct VideoClip {
     var id = UUID()
     let asset: AVAsset
+    /// Имя файла в постоянном хранилище (нужно для черновиков).
+    var file: String = ""
     /// Какой кусок исходника используем (в шкале 600).
     var sourceRange: CMTimeRange
     var speed: Float = 1.0
     var filter: FilterType = .none
     var filterIntensity: Float = 1.0
-    /// Переход ПОСЛЕ этого клипа (между ним и следующим).
+    /// Переход ПОСЛЕ этого клипа (между ним и следующим). 0 = нет.
     var transitionID: Int = 0
     var transitionDuration: Double = 0.6
     var volume: Float = 1.0
@@ -160,11 +163,24 @@ struct VideoClip {
     }
 }
 
-enum TextStyle {
-    static let colors: [UIColor] = [.white, .systemYellow, .systemRed, .cyan, .systemPink, .systemGreen, .black]
+/// Аудио-дорожка: живёт на таймлайне независимо от видео, но только в пределах видео.
+struct AudioClip {
+    var id = UUID()
+    let asset: AVAsset
+    var file: String
+    var title: String
+    /// Где начинается на общем таймлайне (сек).
+    var start: Double
+    /// С какого места исходного аудио играем (сек).
+    var sourceOffset: Double = 0
+    /// Сколько играем (сек).
+    var duration: Double
+    var volume: Float = 1.0
+    /// Полная длина исходного файла.
+    let sourceDuration: Double
 }
 
-struct TextOverlay {
+struct TextOverlay: Codable {
     var id = UUID()
     var text: String
     var start: Double
@@ -173,9 +189,28 @@ struct TextOverlay {
     var position = CGPoint(x: 0.5, y: 0.5)
     /// Размер шрифта как доля высоты кадра.
     var size: CGFloat = 0.05
-    var colorIndex: Int = 0
+    /// Поворот по часовой стрелке (радианы).
+    var rotation: CGFloat = 0
 
-    var color: UIColor { TextStyle.colors[max(0, min(colorIndex, TextStyle.colors.count - 1))] }
+    var fillIndex: Int = 0
+    var strokeIndex: Int = -1
+    var strokeWidth: CGFloat = 0.08
+    var shadow: Int = 1
+    var shadowColorIndex: Int = 5
+    var glowIndex: Int = -1
+    var boxIndex: Int = -1
+    var boxOpacity: Double = 0.9
+    var fontIndex: Int = 0
+    var weight: Int = 6
+    var italic = false
+    var underline = false
+    var strike = false
+    /// 0 — слева, 1 — по центру, 2 — справа
+    var alignment: Int = 1
+    var letterSpacing: CGFloat = 0
+    var animIn: Int = 0
+    var animOut: Int = 0
+    var animDuration: Double = 0.5
 }
 
 /// Раскладка клипов на таймлайне: старты, длительности и перекрытия под переходы.
@@ -988,6 +1023,487 @@ enum TransitionRenderer {
 }
 
 // =====================================================================
+// MARK: - Text engine: палитра, шрифты, тени, стили, анимации
+// =====================================================================
+
+enum TextPalette {
+    /// 60 цветов: 6 нейтральных + 18 оттенков × (яркие, пастельные, глубокие).
+    static let colors: [UIColor] = {
+        var c: [UIColor] = [
+            .white, UIColor(white: 0.85, alpha: 1), UIColor(white: 0.6, alpha: 1),
+            UIColor(white: 0.35, alpha: 1), UIColor(white: 0.12, alpha: 1), .black
+        ]
+        let hues: [CGFloat] = stride(from: 0, to: 360, by: 20).map { CGFloat($0) / 360 }
+        for h in hues { c.append(UIColor(hue: h, saturation: 0.9, brightness: 1.0, alpha: 1)) }
+        for h in hues { c.append(UIColor(hue: h, saturation: 0.5, brightness: 1.0, alpha: 1)) }
+        for h in hues { c.append(UIColor(hue: h, saturation: 0.95, brightness: 0.6, alpha: 1)) }
+        return c
+    }()
+
+    static func color(_ i: Int) -> UIColor { colors[max(0, min(i, colors.count - 1))] }
+
+    // Индексы для пресетов
+    static let white = 0, black = 5
+    static func vivid(_ deg: Int) -> Int { 6 + deg / 20 }
+    static func pastel(_ deg: Int) -> Int { 24 + deg / 20 }
+    static func deep(_ deg: Int) -> Int { 42 + deg / 20 }
+}
+
+struct TextFontOption {
+    let title: String
+    let name: String?
+    let design: UIFontDescriptor.SystemDesign?
+}
+
+enum TextFonts {
+    static let all: [TextFontOption] = [
+        TextFontOption(title: "Система", name: nil, design: nil),
+        TextFontOption(title: "Скруглённый", name: nil, design: .rounded),
+        TextFontOption(title: "Моно", name: nil, design: .monospaced),
+        TextFontOption(title: "Засечки", name: nil, design: .serif),
+        TextFontOption(title: "Georgia", name: "Georgia-Bold", design: nil),
+        TextFontOption(title: "Courier", name: "CourierNewPS-BoldMT", design: nil),
+        TextFontOption(title: "Marker Felt", name: "MarkerFelt-Wide", design: nil),
+        TextFontOption(title: "Chalkduster", name: "Chalkduster", design: nil),
+        TextFontOption(title: "Noteworthy", name: "Noteworthy-Bold", design: nil),
+        TextFontOption(title: "Avenir", name: "AvenirNext-Heavy", design: nil),
+        TextFontOption(title: "Futura", name: "Futura-Bold", design: nil),
+        TextFontOption(title: "Snell", name: "SnellRoundhand-Bold", design: nil),
+        TextFontOption(title: "Papyrus", name: "Papyrus", design: nil),
+        TextFontOption(title: "Bradley", name: "BradleyHandITCTT-Bold", design: nil),
+        TextFontOption(title: "Copperplate", name: "Copperplate-Bold", design: nil),
+        TextFontOption(title: "Didot", name: "Didot-Bold", design: nil),
+        TextFontOption(title: "Optima", name: "Optima-ExtraBlack", design: nil),
+        TextFontOption(title: "Baskerville", name: "Baskerville-Bold", design: nil),
+        TextFontOption(title: "Trebuchet", name: "TrebuchetMS-Bold", design: nil),
+        TextFontOption(title: "Arial Round", name: "ArialRoundedMTBold", design: nil),
+        TextFontOption(title: "Typewriter", name: "AmericanTypewriter-Bold", design: nil),
+        TextFontOption(title: "Palatino", name: "Palatino-Bold", design: nil),
+        TextFontOption(title: "Gill Sans", name: "GillSans-Bold", design: nil),
+        TextFontOption(title: "Zapfino", name: "Zapfino", design: nil),
+        TextFontOption(title: "Savoye", name: "SavoyeLetPlain", design: nil),
+        TextFontOption(title: "Party", name: "PartyLetPlain", design: nil),
+        TextFontOption(title: "Bodoni", name: "BodoniSvtyTwoITCTT-Bold", design: nil),
+        TextFontOption(title: "Cochin", name: "Cochin-Bold", design: nil),
+        TextFontOption(title: "Menlo", name: "Menlo-Bold", design: nil),
+        TextFontOption(title: "Verdana", name: "Verdana-Bold", design: nil),
+        TextFontOption(title: "Condensed", name: "HelveticaNeue-CondensedBlack", design: nil),
+        TextFontOption(title: "Narrow", name: "AvenirNextCondensed-Heavy", design: nil),
+        TextFontOption(title: "DIN", name: "DINAlternate-Bold", design: nil),
+        TextFontOption(title: "Rockwell", name: "Rockwell-Bold", design: nil),
+        TextFontOption(title: "Clarendon", name: "Superclarendon-Black", design: nil)
+    ]
+
+    static let weights: [(String, UIFont.Weight)] = [
+        ("Тонкий", .thin), ("Лёгкий", .light), ("Обычный", .regular), ("Medium", .medium),
+        ("Semibold", .semibold), ("Bold", .bold), ("Heavy", .heavy), ("Black", .black)
+    ]
+
+    static func index(_ title: String) -> Int { all.firstIndex { $0.title == title } ?? 0 }
+
+    static func font(_ o: TextOverlay, size: CGFloat) -> UIFont {
+        let opt = all[max(0, min(o.fontIndex, all.count - 1))]
+        let w = weights[max(0, min(o.weight, weights.count - 1))].1
+        if let name = opt.name, let f = UIFont(name: name, size: size) { return f }
+        var f = UIFont.systemFont(ofSize: size, weight: w)
+        if let design = opt.design, let d = f.fontDescriptor.withDesign(design) {
+            f = UIFont(descriptor: d, size: size)
+        }
+        return f
+    }
+}
+
+enum TextShadow: Int, CaseIterable {
+    case none, soft, hard, far, deep, lift, halo
+
+    var title: String {
+        switch self {
+        case .none: return "Без тени"
+        case .soft: return "Мягкая"
+        case .hard: return "Жёсткая"
+        case .far: return "Далёкая"
+        case .deep: return "Глубокая"
+        case .lift: return "Подъём"
+        case .halo: return "Ореол"
+        }
+    }
+}
+
+// MARK: Animations
+
+struct TextAnimState {
+    var alpha: CGFloat = 1
+    var dx: CGFloat = 0        // доля ширины кадра, + вправо
+    var dy: CGFloat = 0        // доля высоты кадра, + вниз
+    var scale: CGFloat = 1
+    var scaleX: CGFloat = 1
+    var rot: CGFloat = 0       // по часовой стрелке
+    var blur: CGFloat = 0      // доля высоты кадра
+    var visible: CGFloat = 1   // доля показанных символов
+    var byWord = false
+    var wipe: CGFloat = 1
+    var wipeFromRight = false
+    var glitch: CGFloat = 0
+}
+
+enum TextAnim: Int, CaseIterable {
+    case none, fade, slideUp, slideDown, slideLeft, slideRight, pop, zoomIn, grow, drop
+    case spin, flip, typewriter, words, wipeRight, wipeLeft, blur, flicker, glitch, swing
+
+    var title: String {
+        switch self {
+        case .none: return "Нет"
+        case .fade: return "Проявление"
+        case .slideUp: return "Снизу вверх"
+        case .slideDown: return "Сверху вниз"
+        case .slideLeft: return "Справа налево"
+        case .slideRight: return "Слева направо"
+        case .pop: return "Поп"
+        case .zoomIn: return "Из зума"
+        case .grow: return "Рост"
+        case .drop: return "Падение"
+        case .spin: return "Вращение"
+        case .flip: return "Переворот"
+        case .typewriter: return "Печать"
+        case .words: return "По словам"
+        case .wipeRight: return "Шторка →"
+        case .wipeLeft: return "Шторка ←"
+        case .blur: return "Из размытия"
+        case .flicker: return "Мерцание"
+        case .glitch: return "Глитч"
+        case .swing: return "Качели"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .none: return "xmark"
+        case .fade: return "drop.halffull"
+        case .slideUp: return "arrow.up"
+        case .slideDown: return "arrow.down"
+        case .slideLeft: return "arrow.left"
+        case .slideRight: return "arrow.right"
+        case .pop: return "star.fill"
+        case .zoomIn: return "plus.magnifyingglass"
+        case .grow: return "arrow.up.left.and.arrow.down.right"
+        case .drop: return "arrow.down.to.line"
+        case .spin: return "arrow.triangle.2.circlepath"
+        case .flip: return "arrow.left.and.right"
+        case .typewriter: return "keyboard"
+        case .words: return "text.alignleft"
+        case .wipeRight: return "forward.end.fill"
+        case .wipeLeft: return "backward.end.fill"
+        case .blur: return "eye.slash"
+        case .flicker: return "bolt.fill"
+        case .glitch: return "waveform"
+        case .swing: return "arrow.2.squarepath"
+        }
+    }
+
+    /// a: 0 — текст скрыт, 1 — показан полностью. inPhase: появление (true) или исчезание (false).
+    func apply(a rawA: CGFloat, inPhase: Bool, time: Double, to s: inout TextAnimState) {
+        let a = max(0, min(1, rawA))
+        guard a < 1, self != .none else { return }
+        let k = 1 - a
+        let sign: CGFloat = inPhase ? 1 : -1
+
+        func backOut(_ x: CGFloat) -> CGFloat {
+            let c1: CGFloat = 1.70158, c3 = c1 + 1
+            return 1 + c3 * pow(x - 1, 3) + c1 * pow(x - 1, 2)
+        }
+        func bounceOut(_ x: CGFloat) -> CGFloat {
+            let n1: CGFloat = 7.5625, d1: CGFloat = 2.75
+            if x < 1 / d1 { return n1 * x * x }
+            if x < 2 / d1 { let y = x - 1.5 / d1; return n1 * y * y + 0.75 }
+            if x < 2.5 / d1 { let y = x - 2.25 / d1; return n1 * y * y + 0.9375 }
+            let y = x - 2.625 / d1
+            return n1 * y * y + 0.984375
+        }
+
+        switch self {
+        case .none: break
+        case .fade: s.alpha *= a
+        case .slideUp: s.alpha *= a; s.dy += sign * k * 0.10
+        case .slideDown: s.alpha *= a; s.dy -= sign * k * 0.10
+        case .slideLeft: s.alpha *= a; s.dx += sign * k * 0.18
+        case .slideRight: s.alpha *= a; s.dx -= sign * k * 0.18
+        case .pop: s.scale *= max(0.001, backOut(a)); s.alpha *= min(1, a * 3)
+        case .zoomIn: s.scale *= 1 + k; s.alpha *= a
+        case .grow: s.scale *= 0.3 + 0.7 * a; s.alpha *= a
+        case .drop: s.dy -= sign * (1 - bounceOut(a)) * 0.4; s.alpha *= min(1, a * 4)
+        case .spin: s.rot -= sign * k * .pi; s.scale *= 0.4 + 0.6 * a; s.alpha *= a
+        case .flip: s.scaleX *= max(0.02, a); s.alpha *= a
+        case .typewriter: s.visible = min(s.visible, a)
+        case .words: s.visible = min(s.visible, a); s.byWord = true
+        case .wipeRight: s.wipe = min(s.wipe, a); s.wipeFromRight = false
+        case .wipeLeft: s.wipe = min(s.wipe, a); s.wipeFromRight = true
+        case .blur: s.blur += k * 0.03; s.alpha *= a
+        case .flicker: s.alpha *= a * (sin(time * 70) > 0 ? 1 : 0.15)
+        case .glitch: s.glitch = max(s.glitch, k); s.alpha *= max(0.35, a)
+        case .swing: s.rot += sign * k * 0.7 * cos(a * 10); s.alpha *= min(1, a * 3)
+        }
+    }
+}
+
+// MARK: Overlay style helpers
+
+extension TextOverlay {
+    mutating func resetStyle() {
+        fillIndex = 0
+        strokeIndex = -1
+        strokeWidth = 0.08
+        shadow = 0
+        shadowColorIndex = TextPalette.black
+        glowIndex = -1
+        boxIndex = -1
+        boxOpacity = 0.9
+        fontIndex = 0
+        weight = 6
+        italic = false
+        underline = false
+        strike = false
+        letterSpacing = 0
+    }
+}
+
+struct TextPreset {
+    let title: String
+    let apply: (inout TextOverlay) -> Void
+}
+
+enum TextPresets {
+    static let all: [TextPreset] = [
+        TextPreset(title: "Классика") { o in o.resetStyle(); o.shadow = TextShadow.soft.rawValue },
+        TextPreset(title: "Контур") { o in o.resetStyle(); o.strokeIndex = TextPalette.black; o.strokeWidth = 0.1 },
+        TextPreset(title: "Жёлтый") { o in
+            o.resetStyle(); o.fillIndex = TextPalette.vivid(60); o.strokeIndex = TextPalette.black
+            o.strokeWidth = 0.1; o.shadow = TextShadow.hard.rawValue
+        },
+        TextPreset(title: "Неон розовый") { o in o.resetStyle(); o.glowIndex = TextPalette.vivid(320) },
+        TextPreset(title: "Неон голубой") { o in o.resetStyle(); o.glowIndex = TextPalette.vivid(180) },
+        TextPreset(title: "Неон зелёный") { o in o.resetStyle(); o.glowIndex = TextPalette.vivid(120) },
+        TextPreset(title: "Неон фиолет") { o in o.resetStyle(); o.glowIndex = TextPalette.vivid(280) },
+        TextPreset(title: "Неон жёлтый") { o in o.resetStyle(); o.glowIndex = TextPalette.vivid(60) },
+        TextPreset(title: "Плашка тёмная") { o in o.resetStyle(); o.boxIndex = TextPalette.black; o.boxOpacity = 0.85 },
+        TextPreset(title: "Плашка белая") { o in o.resetStyle(); o.fillIndex = TextPalette.black; o.boxIndex = TextPalette.white; o.boxOpacity = 0.95 },
+        TextPreset(title: "Плашка жёлтая") { o in o.resetStyle(); o.fillIndex = TextPalette.black; o.boxIndex = TextPalette.vivid(60); o.boxOpacity = 1 },
+        TextPreset(title: "Плашка розовая") { o in o.resetStyle(); o.boxIndex = TextPalette.vivid(320); o.boxOpacity = 1 },
+        TextPreset(title: "Плашка синяя") { o in o.resetStyle(); o.boxIndex = TextPalette.vivid(220); o.boxOpacity = 1 },
+        TextPreset(title: "Ретро") { o in
+            o.resetStyle(); o.fontIndex = TextFonts.index("Futura"); o.fillIndex = TextPalette.vivid(60)
+            o.shadow = TextShadow.far.rawValue; o.shadowColorIndex = TextPalette.vivid(320)
+        },
+        TextPreset(title: "Комикс") { o in
+            o.resetStyle(); o.fontIndex = TextFonts.index("Marker Felt"); o.fillIndex = TextPalette.vivid(60)
+            o.strokeIndex = TextPalette.black; o.strokeWidth = 0.14; o.shadow = TextShadow.hard.rawValue
+        },
+        TextPreset(title: "Тик-ток") { o in
+            o.resetStyle(); o.shadow = TextShadow.hard.rawValue; o.shadowColorIndex = TextPalette.vivid(180)
+        },
+        TextPreset(title: "Огонь") { o in
+            o.resetStyle(); o.fillIndex = TextPalette.vivid(20); o.glowIndex = TextPalette.vivid(0)
+            o.strokeIndex = TextPalette.deep(0); o.strokeWidth = 0.06
+        },
+        TextPreset(title: "Лёд") { o in o.resetStyle(); o.fillIndex = TextPalette.pastel(180); o.glowIndex = TextPalette.vivid(220) },
+        TextPreset(title: "Золото") { o in
+            o.resetStyle(); o.fillIndex = TextPalette.vivid(40); o.strokeIndex = TextPalette.deep(20)
+            o.strokeWidth = 0.07; o.shadow = TextShadow.soft.rawValue
+        },
+        TextPreset(title: "Мятный") { o in o.resetStyle(); o.fillIndex = TextPalette.pastel(120); o.shadow = TextShadow.soft.rawValue },
+        TextPreset(title: "Закат") { o in o.resetStyle(); o.fillIndex = TextPalette.pastel(320); o.glowIndex = TextPalette.vivid(20) },
+        TextPreset(title: "Тёмный") { o in o.resetStyle(); o.fillIndex = TextPalette.black; o.strokeIndex = TextPalette.white; o.strokeWidth = 0.1 },
+        TextPreset(title: "Двойной") { o in
+            o.resetStyle(); o.strokeIndex = TextPalette.black; o.strokeWidth = 0.1; o.glowIndex = TextPalette.vivid(320)
+        },
+        TextPreset(title: "Минимал") { o in
+            o.resetStyle(); o.weight = 1; o.letterSpacing = 0.15; o.shadow = TextShadow.soft.rawValue
+        },
+        TextPreset(title: "Рукописный") { o in
+            o.resetStyle(); o.fontIndex = TextFonts.index("Snell"); o.shadow = TextShadow.soft.rawValue
+        },
+        TextPreset(title: "Машинка") { o in
+            o.resetStyle(); o.fontIndex = TextFonts.index("Typewriter"); o.fillIndex = TextPalette.black
+            o.boxIndex = TextPalette.white; o.boxOpacity = 0.92
+        },
+        TextPreset(title: "Мел") { o in o.resetStyle(); o.fontIndex = TextFonts.index("Chalkduster"); o.shadow = TextShadow.soft.rawValue },
+        TextPreset(title: "Элегант") { o in
+            o.resetStyle(); o.fontIndex = TextFonts.index("Didot"); o.letterSpacing = 0.1; o.shadow = TextShadow.soft.rawValue
+        },
+        TextPreset(title: "Код") { o in
+            o.resetStyle(); o.fontIndex = TextFonts.index("Menlo"); o.fillIndex = TextPalette.vivid(120)
+            o.boxIndex = TextPalette.black; o.boxOpacity = 0.9
+        },
+        TextPreset(title: "Милый") { o in
+            o.resetStyle(); o.fontIndex = TextFonts.index("Скруглённый"); o.fillIndex = TextPalette.pastel(320)
+            o.strokeIndex = TextPalette.white; o.strokeWidth = 0.12
+        },
+        TextPreset(title: "Крик") { o in
+            o.resetStyle(); o.fillIndex = TextPalette.vivid(0); o.strokeIndex = TextPalette.white
+            o.strokeWidth = 0.12; o.shadow = TextShadow.hard.rawValue
+        },
+        TextPreset(title: "Призрак") { o in
+            o.resetStyle(); o.fillIndex = TextPalette.pastel(260); o.glowIndex = TextPalette.pastel(260); o.weight = 3
+        }
+    ]
+}
+
+// =====================================================================
+// MARK: - Text renderer (одинаковый код для превью и экспорта)
+// =====================================================================
+
+enum TextRenderer {
+    private static let cache = NSCache<NSString, CIImage>()
+
+    struct Layout {
+        let size: CGSize
+        let bound: CGSize
+        let pad: CGFloat
+        let fontSize: CGFloat
+    }
+
+    private static func attributed(_ o: TextOverlay, fontSize fs: CGFloat, fill: UIColor, stroke: UIColor? = nil,
+                                   strokeWidth: CGFloat = 0, visible: Int? = nil, shadow: NSShadow? = nil) -> NSAttributedString {
+        let para = NSMutableParagraphStyle()
+        para.alignment = o.alignment == 0 ? .left : (o.alignment == 2 ? .right : .center)
+
+        func attrs(_ color: UIColor) -> [NSAttributedString.Key: Any] {
+            var a: [NSAttributedString.Key: Any] = [
+                .font: TextFonts.font(o, size: fs),
+                .foregroundColor: color,
+                .paragraphStyle: para
+            ]
+            if o.letterSpacing != 0 { a[.kern] = o.letterSpacing * fs }
+            if o.italic { a[.obliqueness] = 0.22 }
+            if o.underline { a[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+            if o.strike { a[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+            if let st = stroke {
+                // отрицательная ширина = заливка + обводка; foreground должен быть цвета обводки
+                a[.strokeColor] = st
+                a[.strokeWidth] = -(strokeWidth * 200)
+            }
+            if let sh = shadow { a[.shadow] = sh }
+            return a
+        }
+
+        let result = NSMutableAttributedString(string: o.text, attributes: attrs(fill))
+        if let v = visible {
+            let chars = Array(o.text)
+            if v < chars.count {
+                let prefix = String(chars[0..<max(0, v)])
+                let start = (prefix as NSString).length
+                let total = (o.text as NSString).length
+                if start < total {
+                    var hidden = attrs(.clear)
+                    if stroke != nil { hidden[.strokeColor] = UIColor.clear }
+                    result.setAttributes(hidden, range: NSRange(location: start, length: total - start))
+                }
+            }
+        }
+        return result
+    }
+
+    static func layout(_ o: TextOverlay, canvas: CGSize) -> Layout {
+        let fs = max(8, o.size * canvas.height)
+        let attr = attributed(o, fontSize: fs, fill: .white)
+        let rect = attr.boundingRect(with: CGSize(width: canvas.width * 0.9, height: .greatestFiniteMagnitude),
+                                     options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+        let bound = CGSize(width: ceil(rect.width) + 2, height: ceil(rect.height))
+        let pad = fs * 0.9
+        return Layout(size: CGSize(width: bound.width + pad * 2, height: bound.height + pad * 2),
+                      bound: bound, pad: pad, fontSize: fs)
+    }
+
+    static func pixelSize(for o: TextOverlay, canvas: CGSize) -> CGSize { layout(o, canvas: canvas).size }
+
+    private static func shadowObject(_ o: TextOverlay, fs: CGFloat) -> NSShadow? {
+        guard let style = TextShadow(rawValue: o.shadow), style != .none else { return nil }
+        let base = TextPalette.color(o.shadowColorIndex)
+        let sh = NSShadow()
+        switch style {
+        case .none: return nil
+        case .soft:
+            sh.shadowOffset = CGSize(width: 0, height: fs * 0.05); sh.shadowBlurRadius = fs * 0.12
+            sh.shadowColor = base.withAlphaComponent(0.7)
+        case .hard:
+            sh.shadowOffset = CGSize(width: fs * 0.06, height: fs * 0.06); sh.shadowBlurRadius = 0
+            sh.shadowColor = base
+        case .far:
+            sh.shadowOffset = CGSize(width: fs * 0.12, height: fs * 0.12); sh.shadowBlurRadius = 0
+            sh.shadowColor = base
+        case .deep:
+            sh.shadowOffset = CGSize(width: 0, height: fs * 0.12); sh.shadowBlurRadius = fs * 0.25
+            sh.shadowColor = base.withAlphaComponent(0.85)
+        case .lift:
+            sh.shadowOffset = CGSize(width: fs * 0.03, height: fs * 0.1); sh.shadowBlurRadius = fs * 0.18
+            sh.shadowColor = base.withAlphaComponent(0.5)
+        case .halo:
+            sh.shadowOffset = .zero; sh.shadowBlurRadius = fs * 0.28
+            sh.shadowColor = base
+        }
+        return sh
+    }
+
+    static func uiImage(for o: TextOverlay, canvas: CGSize, visible: Int? = nil) -> UIImage {
+        let l = layout(o, canvas: canvas)
+        let fs = l.fontSize
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        let opts: NSStringDrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+
+        return UIGraphicsImageRenderer(size: l.size, format: format).image { ctx in
+            let cg = ctx.cgContext
+            let textRect = CGRect(x: l.pad, y: l.pad, width: l.bound.width, height: l.bound.height)
+
+            if o.boxIndex >= 0 {
+                let r = textRect.insetBy(dx: -fs * 0.4, dy: -fs * 0.18)
+                cg.setFillColor(TextPalette.color(o.boxIndex).withAlphaComponent(CGFloat(o.boxOpacity)).cgColor)
+                cg.addPath(UIBezierPath(roundedRect: r, cornerRadius: fs * 0.28).cgPath)
+                cg.fillPath()
+            }
+
+            if o.glowIndex >= 0 {
+                let gc = TextPalette.color(o.glowIndex)
+                for k in [CGFloat(0.7), 0.35, 0.12] {
+                    let sh = NSShadow()
+                    sh.shadowOffset = .zero
+                    sh.shadowBlurRadius = fs * k
+                    sh.shadowColor = gc
+                    attributed(o, fontSize: fs, fill: gc, visible: visible, shadow: sh)
+                        .draw(with: textRect, options: opts, context: nil)
+                }
+            }
+
+            let fillColor = TextPalette.color(o.fillIndex)
+            let shadow = shadowObject(o, fs: fs)
+            if o.strokeIndex >= 0 {
+                let sc = TextPalette.color(o.strokeIndex)
+                attributed(o, fontSize: fs, fill: sc, stroke: sc, strokeWidth: o.strokeWidth, visible: visible, shadow: shadow)
+                    .draw(with: textRect, options: opts, context: nil)
+                attributed(o, fontSize: fs, fill: fillColor, visible: visible)
+                    .draw(with: textRect, options: opts, context: nil)
+            } else {
+                attributed(o, fontSize: fs, fill: fillColor, visible: visible, shadow: shadow)
+                    .draw(with: textRect, options: opts, context: nil)
+            }
+        }
+    }
+
+    private static func key(_ o: TextOverlay, canvas: CGSize, visible: Int?) -> NSString {
+        "\(o.text)|\(o.size)|\(o.fillIndex)|\(o.strokeIndex)|\(o.strokeWidth)|\(o.shadow)|\(o.shadowColorIndex)|\(o.glowIndex)|\(o.boxIndex)|\(o.boxOpacity)|\(o.fontIndex)|\(o.weight)|\(o.italic)|\(o.underline)|\(o.strike)|\(o.alignment)|\(o.letterSpacing)|\(Int(canvas.width))x\(Int(canvas.height))|\(visible ?? -1)" as NSString
+    }
+
+    static func image(for o: TextOverlay, canvas: CGSize, visible: Int? = nil) -> CIImage? {
+        let k = key(o, canvas: canvas, visible: visible)
+        if let cached = cache.object(forKey: k) { return cached }
+        guard let cg = uiImage(for: o, canvas: canvas, visible: visible).cgImage else { return nil }
+        let ci = CIImage(cgImage: cg)
+        cache.setObject(ci, forKey: k)
+        return ci
+    }
+}
+
+// =====================================================================
 // MARK: - Thumbnails (один раз на файл, дальше режем как угодно)
 // =====================================================================
 
@@ -1068,60 +1584,6 @@ final class ThumbnailStore {
             self?.notifyScheduled = false
             self?.onUpdate?()
         }
-    }
-}
-
-// =====================================================================
-// MARK: - Text rendering (один и тот же код для превью и экспорта)
-// =====================================================================
-
-enum TextRenderer {
-    private static let cache = NSCache<NSString, CIImage>()
-
-    private static func layout(_ o: TextOverlay, canvas: CGSize) -> (attr: NSAttributedString, bound: CGSize, pad: CGFloat, size: CGSize) {
-        let fontSize = max(8, o.size * canvas.height)
-        let shadow = NSShadow()
-        shadow.shadowColor = UIColor.black.withAlphaComponent(0.75)
-        shadow.shadowBlurRadius = fontSize * 0.08
-        shadow.shadowOffset = CGSize(width: 0, height: fontSize * 0.04)
-        let para = NSMutableParagraphStyle()
-        para.alignment = .center
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: fontSize, weight: .heavy),
-            .foregroundColor: o.color,
-            .shadow: shadow,
-            .paragraphStyle: para
-        ]
-        let attr = NSAttributedString(string: o.text, attributes: attrs)
-        let maxW = canvas.width * 0.9
-        let rect = attr.boundingRect(with: CGSize(width: maxW, height: .greatestFiniteMagnitude),
-                                     options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
-        let bound = CGSize(width: ceil(rect.width), height: ceil(rect.height))
-        let pad = fontSize * 0.3
-        return (attr, bound, pad, CGSize(width: bound.width + pad * 2, height: bound.height + pad * 2))
-    }
-
-    /// Размер текстовой картинки в пикселях кадра (нужен, чтобы нарисовать рамку в превью).
-    static func pixelSize(for o: TextOverlay, canvas: CGSize) -> CGSize {
-        layout(o, canvas: canvas).size
-    }
-
-    static func image(for o: TextOverlay, canvas: CGSize) -> CIImage? {
-        let key = "\(o.id.uuidString)|\(o.text)|\(o.size)|\(o.colorIndex)|\(Int(canvas.width))x\(Int(canvas.height))" as NSString
-        if let cached = cache.object(forKey: key) { return cached }
-
-        let l = layout(o, canvas: canvas)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = false
-        let ui = UIGraphicsImageRenderer(size: l.size, format: format).image { _ in
-            l.attr.draw(with: CGRect(x: l.pad, y: l.pad, width: l.bound.width, height: l.bound.height),
-                        options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
-        }
-        guard let cg = ui.cgImage else { return nil }
-        let ci = CIImage(cgImage: cg)
-        cache.setObject(ci, forKey: key)
-        return ci
     }
 }
 
@@ -1216,13 +1678,7 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
                 }
 
                 for o in instruction.texts where time >= o.start && time < o.start + o.duration {
-                    if let img = TextRenderer.image(for: o, canvas: size) {
-                        let cx = o.position.x * size.width
-                        let cy = size.height - o.position.y * size.height
-                        let moved = img.transformed(by: CGAffineTransform(translationX: cx - img.extent.width / 2,
-                                                                          y: cy - img.extent.height / 2))
-                        output = moved.composited(over: output)
-                    }
+                    output = self.overlayText(o, time: time, canvas: size, over: output)
                 }
 
                 EditorCompositor.ciContext.render(output.cropped(to: rect), to: outBuffer, bounds: rect,
@@ -1230,6 +1686,88 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
                 request.finish(withComposedVideoFrame: outBuffer)
             }
         }
+    }
+
+
+    // MARK: Text overlay (позиция, поворот, анимации появления/исчезания)
+
+    private func rgbSplit(_ img: CIImage, d: CGFloat) -> CIImage {
+        func channel(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CIImage {
+            img.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: r, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: g, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: b, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+            ])
+        }
+        let red = channel(1, 0, 0).transformed(by: CGAffineTransform(translationX: d, y: 0))
+        let green = channel(0, 1, 0)
+        let blue = channel(0, 0, 1).transformed(by: CGAffineTransform(translationX: -d, y: 0))
+        let rg = green.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: red])
+        return blue.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: rg])
+    }
+
+    private func overlayText(_ o: TextOverlay, time: Double, canvas: CGSize, over base: CIImage) -> CIImage {
+        let rel = time - o.start
+        let ad = max(0.01, min(o.animDuration, o.duration / 2))
+        var st = TextAnimState()
+        if let a = TextAnim(rawValue: o.animIn), a != .none {
+            a.apply(a: CGFloat(rel / ad), inPhase: true, time: time, to: &st)
+        }
+        if let a = TextAnim(rawValue: o.animOut), a != .none {
+            a.apply(a: CGFloat((o.duration - rel) / ad), inPhase: false, time: time, to: &st)
+        }
+        guard st.alpha > 0.005, st.wipe > 0.001 else { return base }
+
+        var visible: Int? = nil
+        if st.visible < 0.999 {
+            let chars = Array(o.text)
+            var n = 0
+            if st.byWord {
+                var ends: [Int] = []
+                var inWord = false
+                for (idx, ch) in chars.enumerated() {
+                    if ch.isWhitespace || ch.isNewline {
+                        if inWord { ends.append(idx); inWord = false }
+                    } else { inWord = true }
+                }
+                if inWord { ends.append(chars.count) }
+                let k = Int(ceil(st.visible * CGFloat(ends.count)))
+                if k > 0 && !ends.isEmpty { n = ends[min(k, ends.count) - 1] }
+            } else {
+                n = Int(ceil(st.visible * CGFloat(chars.count)))
+            }
+            guard n > 0 else { return base }
+            visible = min(n, chars.count)
+        }
+
+        guard var img = TextRenderer.image(for: o, canvas: canvas, visible: visible) else { return base }
+        let full = img.extent
+
+        if st.wipe < 0.999 {
+            let w = full.width * st.wipe
+            let r = st.wipeFromRight
+                ? CGRect(x: full.maxX - w, y: full.minY, width: w, height: full.height)
+                : CGRect(x: full.minX, y: full.minY, width: w, height: full.height)
+            img = img.cropped(to: r)
+        }
+        let sigma = st.blur * canvas.height
+        if sigma > 0.5 {
+            img = img.applyingGaussianBlur(sigma: Double(sigma)).cropped(to: full.insetBy(dx: -sigma * 3, dy: -sigma * 3))
+        }
+        if st.glitch > 0.02 {
+            img = rgbSplit(img, d: st.glitch * full.height * 0.12 * CGFloat(sin(time * 90)))
+        }
+
+        let cx = (o.position.x + st.dx) * canvas.width
+        let cy = canvas.height - (o.position.y + st.dy) * canvas.height
+        var t = CGAffineTransform(translationX: -full.width / 2, y: -full.height / 2)
+        t = t.concatenating(CGAffineTransform(scaleX: st.scale * st.scaleX, y: st.scale))
+        t = t.concatenating(CGAffineTransform(rotationAngle: -(o.rotation + st.rot)))
+        t = t.concatenating(CGAffineTransform(translationX: cx, y: cy))
+        img = opacity(img.transformed(by: t), st.alpha)
+        return img.composited(over: base)
     }
 
     // MARK: Frame preparation
@@ -1301,7 +1839,7 @@ final class EditorBuild {
         self.orientations = orientations
     }
 
-    static func make(clips: [VideoClip], music: AVAsset?, musicVolume: Float) -> EditorBuild? {
+    static func make(clips: [VideoClip], audios: [AudioClip]) -> EditorBuild? {
         guard !clips.isEmpty else { return nil }
 
         let comp = AVMutableComposition()
@@ -1353,13 +1891,16 @@ final class EditorBuild {
 
         var params: [AVMutableAudioMixInputParameters] = audioParams
 
-        if let music = music,
-           let mSrc = music.tracks(withMediaType: .audio).first,
-           let mTrack = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-            let d = CMTimeMinimum(snapMusic(music.duration), layout.total)
-            try? mTrack.insertTimeRange(CMTimeRange(start: .zero, duration: d), of: mSrc, at: .zero)
-            let mp = AVMutableAudioMixInputParameters(track: mTrack)
-            mp.setVolume(musicVolume, at: .zero)
+        for a in audios {
+            guard let src = a.asset.tracks(withMediaType: .audio).first,
+                  let tr = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else { continue }
+            let dur = min(a.duration, layout.total.secs - a.start, a.sourceDuration - a.sourceOffset)
+            guard dur > 0.05 else { continue }
+            try? tr.insertTimeRange(CMTimeRange(start: ticks(a.sourceOffset), duration: floorTicks(dur)),
+                                    of: src, at: ticks(a.start))
+            let mp = AVMutableAudioMixInputParameters(track: tr)
+            mp.setVolume(a.volume, at: .zero)
             params.append(mp)
         }
 
@@ -1385,7 +1926,6 @@ final class EditorBuild {
                            trackIDs: [vA.trackID, vB.trackID], orientations: orientations)
     }
 
-    private static func snapMusic(_ t: CMTime) -> CMTime { floorTicks(t.secs) }
 
     /// Инструкции дёшево пересобираются — поэтому смена фильтра/текста не пересобирает всю композицию.
     func makeVideoComposition(clips: [VideoClip], texts: [TextOverlay]) -> AVMutableVideoComposition {
@@ -1445,6 +1985,22 @@ final class PaddingLabel: UILabel {
     }
 }
 
+/// Белые «ручки» по краям выбранного элемента — за них тянем, чтобы обрезать/вернуть.
+func addTrimHandles(to v: UIView) {
+    for left in [true, false] {
+        let h = UIView(frame: CGRect(x: left ? 0 : v.bounds.width - 12, y: 0, width: 12, height: v.bounds.height))
+        h.backgroundColor = UIColor(white: 0.97, alpha: 1)
+        h.autoresizingMask = left ? [.flexibleHeight, .flexibleRightMargin] : [.flexibleHeight, .flexibleLeftMargin]
+        h.isUserInteractionEnabled = false
+        let grip = UIView(frame: CGRect(x: 4.5, y: max(2, v.bounds.height / 2 - 7), width: 3, height: 14))
+        grip.backgroundColor = UIColor(white: 0.25, alpha: 1)
+        grip.layer.cornerRadius = 1.5
+        grip.autoresizingMask = [.flexibleTopMargin, .flexibleBottomMargin]
+        h.addSubview(grip)
+        v.addSubview(h)
+    }
+}
+
 // =====================================================================
 // MARK: - Timeline
 // =====================================================================
@@ -1497,8 +2053,6 @@ final class ClipTileView: UIView {
         backgroundColor = UIColor(white: 0.22, alpha: 1)
         layer.cornerRadius = 6
         clipsToBounds = true
-        layer.borderWidth = selected ? 2.5 : 0
-        layer.borderColor = UIColor.white.cgColor
 
         let tileW = height
         let count = max(1, Int(ceil(width / tileW)))
@@ -1527,21 +2081,72 @@ final class ClipTileView: UIView {
         label.layer.cornerRadius = 3
         label.clipsToBounds = true
         label.sizeToFit()
-        label.frame.origin = CGPoint(x: 4, y: height - label.frame.height - 4)
+        label.frame.origin = CGPoint(x: 16, y: height - label.frame.height - 4)
         addSubview(label)
+
+        if selected {
+            layer.borderWidth = 2.5
+            layer.borderColor = UIColor.white.cgColor
+            addTrimHandles(to: self)
+        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
-final class TimelineView: UIView, UIScrollViewDelegate {
+/// Полоска аудио с волной.
+final class AudioBarView: UIView {
+    var peaks: [Float] = []
+    var offset: Double = 0
+    var duration: Double = 1
+    var title: String = ""
 
-    static let preferredHeight: CGFloat = 128
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentMode = .redraw
+        backgroundColor = Theme.audio
+        layer.cornerRadius = 6
+        clipsToBounds = true
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext(), duration > 0 else { return }
+        let w = bounds.width, h = bounds.height
+        let pps = CGFloat(WaveformStore.peaksPerSecond)
+        if !peaks.isEmpty {
+            let pxPerSec = w / CGFloat(duration)
+            let step = pxPerSec / pps
+            let barW = max(1, step - 1)
+            ctx.setFillColor(UIColor(white: 1, alpha: 0.7).cgColor)
+            var i = Int(offset * Double(pps))
+            var px: CGFloat = 0
+            let midY = h / 2 + 5
+            while px < w && i < peaks.count {
+                let bh = max(1.5, CGFloat(peaks[i]) * (h - 14))
+                ctx.fill(CGRect(x: px, y: midY - bh / 2, width: barW, height: bh))
+                px += step
+                i += 1
+            }
+        }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: UIColor.white
+        ]
+        ("♪ " + title as NSString).draw(at: CGPoint(x: 16, y: 2), withAttributes: attrs)
+    }
+}
+
+final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+
+    static let minHeight: CGFloat = 112
 
     private let pps: CGFloat = 64               // точек на секунду
     private let clipTop: CGFloat = 26
     private let clipHeight: CGFloat = 56
-    private let textTop: CGFloat = 90
-    private let textHeight: CGFloat = 26
+    private let laneHeight: CGFloat = 26
+    private let laneStep: CGFloat = 30
+    private let handleZone: CGFloat = 22
+    private let minDur: Double = 0.3
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
@@ -1549,31 +2154,63 @@ final class TimelineView: UIView, UIScrollViewDelegate {
     private let playhead = UIView()
     private let knob = UIView()
     private let addTile = UIView()
+    private var press: UILongPressGestureRecognizer!
 
+    // callbacks
     var onScrubBegan: (() -> Void)?
     var onScrub: ((Double) -> Void)?
-    var onSelectClip: ((Int?) -> Void)?
+    var onSelectClip: ((Int) -> Void)?
+    var onSelectText: ((UUID) -> Void)?
+    var onSelectAudio: ((UUID) -> Void)?
+    var onDeselectAll: (() -> Void)?
     var onTapTransition: ((Int) -> Void)?
-    var onSelectText: ((UUID?) -> Void)?
     var onTapAdd: (() -> Void)?
+    var onClipTrimmed: ((Int, CMTimeRange) -> Void)?
+    var onTextTimeChanged: ((UUID, Double, Double) -> Void)?
+    var onAudioTimeChanged: ((UUID, Double, Double, Double) -> Void)?
+    var onNeedHeight: ((CGFloat) -> Void)?
 
     private var clips: [VideoClip] = []
     private var layout = TimelineLayout(clips: [])
     private var texts: [TextOverlay] = []
+    private var audios: [AudioClip] = []
     private var selectedClip: Int?
     private var selectedText: UUID?
+    private var selectedAudio: UUID?
 
+    private struct Item { let id: UUID; let frame: CGRect; let view: UIView }
     private var clipFrames: [CGRect] = []
+    private var clipViews: [ClipTileView] = []
     private var transitionFrames: [CGRect] = []
-    private var textFrames: [CGRect] = []
+    private var textItems: [Item] = []
+    private var audioItems: [Item] = []
+    private(set) var requiredHeight: CGFloat = TimelineView.minHeight
 
     private var isProgrammatic = false
     private var lastPlayheadTime: Double = 0
     private var lastWidth: CGFloat = 0
 
     private var totalSeconds: Double { layout.total.secs }
-
     var isUserScrolling: Bool { scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating }
+
+    // drag
+    private enum DragKind {
+        case clipLeft(Int), clipRight(Int)
+        case textMove(UUID), textLeft(UUID), textRight(UUID)
+        case audioMove(UUID), audioLeft(UUID), audioRight(UUID)
+    }
+    private struct DragState {
+        var kind: DragKind
+        var startX: CGFloat
+        var view: UIView
+        var origFrame: CGRect
+        var moved = false
+        var start: Double = 0
+        var duration: Double = 0
+        var offset: Double = 0
+        var srcRange: CMTimeRange?
+    }
+    private var drag: DragState?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1626,6 +2263,14 @@ final class TimelineView: UIView, UIScrollViewDelegate {
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         contentView.addGestureRecognizer(tap)
+
+        // Нулевое «долгое нажатие» = жест перетаскивания, который начинается сразу при касании
+        // ручки/полоски; на пустом месте он сразу «проваливается» и лента скроллится как обычно.
+        press = UILongPressGestureRecognizer(target: self, action: #selector(handlePress(_:)))
+        press.minimumPressDuration = 0
+        press.delegate = self
+        contentView.addGestureRecognizer(press)
+        scrollView.panGestureRecognizer.require(toFail: press)
     }
 
     override func layoutSubviews() {
@@ -1640,12 +2285,15 @@ final class TimelineView: UIView, UIScrollViewDelegate {
 
     // MARK: Public
 
-    func reload(clips: [VideoClip], layout: TimelineLayout, texts: [TextOverlay], selectedClip: Int?, selectedText: UUID?) {
+    func reload(clips: [VideoClip], layout: TimelineLayout, texts: [TextOverlay], audios: [AudioClip],
+                selectedClip: Int?, selectedText: UUID?, selectedAudio: UUID?) {
         self.clips = clips
         self.layout = layout
         self.texts = texts
+        self.audios = audios
         self.selectedClip = selectedClip
         self.selectedText = selectedText
+        self.selectedAudio = selectedAudio
         rebuildContent()
         setPlayhead(time: lastPlayheadTime, force: true)
     }
@@ -1653,7 +2301,7 @@ final class TimelineView: UIView, UIScrollViewDelegate {
     /// Двигаем красную палку (на самом деле прокручиваем ленту под ней).
     func setPlayhead(time: Double, force: Bool = false) {
         lastPlayheadTime = time
-        if !force && (scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating) { return }
+        if !force && isUserScrolling { return }
         isProgrammatic = true
         scrollView.contentOffset = CGPoint(x: CGFloat(max(0, min(time, totalSeconds))) * pps, y: 0)
         isProgrammatic = false
@@ -1663,20 +2311,36 @@ final class TimelineView: UIView, UIScrollViewDelegate {
 
     // MARK: Build
 
+    private func assignLanes(_ spans: [(Double, Double)]) -> (lane: [Int], count: Int) {
+        let order = spans.indices.sorted { spans[$0].0 < spans[$1].0 }
+        var ends: [Double] = []
+        var result = [Int](repeating: 0, count: spans.count)
+        for i in order {
+            let (s, e) = spans[i]
+            if let l = ends.firstIndex(where: { $0 <= s + 0.0001 }) {
+                ends[l] = e
+                result[i] = l
+            } else {
+                ends.append(e)
+                result[i] = ends.count - 1
+            }
+        }
+        return (result, ends.count)
+    }
+
     private func rebuildContent() {
         guard bounds.width > 0 else { return }
         let side = bounds.width / 2
         let contentW = CGFloat(totalSeconds) * pps + bounds.width
         contentView.subviews.forEach { $0.removeFromSuperview() }
-        contentView.frame = CGRect(x: 0, y: 0, width: contentW, height: bounds.height)
-        scrollView.contentSize = CGSize(width: contentW, height: bounds.height)
+        contentView.frame = CGRect(x: 0, y: 0, width: contentW, height: 600)
+        scrollView.contentSize = CGSize(width: contentW, height: 1)
         ruler.pps = pps
         ruler.total = totalSeconds
 
-        clipFrames = []
-        transitionFrames = []
-        textFrames = []
+        clipFrames = []; clipViews = []; transitionFrames = []; textItems = []; audioItems = []
 
+        // Видео
         for (i, clip) in clips.enumerated() where i < layout.starts.count {
             let x = side + CGFloat(layout.starts[i].secs) * pps + 1
             let w = max(10, CGFloat(layout.durations[i].secs) * pps - 2)
@@ -1684,16 +2348,17 @@ final class TimelineView: UIView, UIScrollViewDelegate {
             tile.frame = CGRect(x: x, y: clipTop, width: w, height: clipHeight)
             contentView.addSubview(tile)
             clipFrames.append(tile.frame)
+            clipViews.append(tile)
         }
 
-        // Кнопки переходов на стыках
+        // Переходы
         if clips.count > 1 {
             for j in 0..<(clips.count - 1) {
                 let cx = side + CGFloat(layout.starts[j + 1].secs) * pps
                 let f = CGRect(x: cx - 13, y: clipTop + clipHeight / 2 - 13, width: 26, height: 26)
                 transitionFrames.append(f)
-                let tSpec = TransitionCatalog.spec(clips[j].transitionID)
-                let has = tSpec != nil
+                let spec = TransitionCatalog.spec(clips[j].transitionID)
+                let has = spec != nil
                 let v = UIView(frame: f)
                 v.backgroundColor = has ? Theme.accent : UIColor(white: 0.95, alpha: 0.95)
                 v.layer.cornerRadius = 13
@@ -1701,7 +2366,7 @@ final class TimelineView: UIView, UIScrollViewDelegate {
                 v.layer.shadowOpacity = 0.4
                 v.layer.shadowRadius = 3
                 v.layer.shadowOffset = .zero
-                let icon = UIImageView(image: UIImage(systemName: tSpec?.category.symbol ?? "rectangle.on.rectangle"))
+                let icon = UIImageView(image: UIImage(systemName: spec?.category.symbol ?? "rectangle.on.rectangle"))
                 icon.tintColor = .black
                 icon.contentMode = .scaleAspectFit
                 icon.frame = CGRect(x: 5, y: 5, width: 16, height: 16)
@@ -1710,25 +2375,60 @@ final class TimelineView: UIView, UIScrollViewDelegate {
             }
         }
 
-        // Текстовая дорожка
-        for o in texts {
+        // Дорожки текста и аудио (под видео)
+        let tl = assignLanes(texts.map { ($0.start, max($0.start + $0.duration, $0.start + 24 / Double(pps))) })
+        let al = assignLanes(audios.map { ($0.start, $0.start + $0.duration) })
+        let textBase = clipTop + clipHeight + 8
+        let audioBase = textBase + CGFloat(tl.count) * laneStep + (tl.count > 0 ? 4 : 0)
+
+        for (k, o) in texts.enumerated() {
             let x = side + CGFloat(o.start) * pps
-            let w = max(36, CGFloat(o.duration) * pps)
-            let bar = UILabel(frame: CGRect(x: x, y: textTop, width: w, height: textHeight))
-            bar.text = "  " + o.text
+            let w = max(24, CGFloat(o.duration) * pps)
+            let y = textBase + CGFloat(tl.lane[k]) * laneStep
+            let bar = PaddingLabel()
+            bar.insets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 8)
+            bar.frame = CGRect(x: x, y: y, width: w, height: laneHeight)
+            bar.text = "T  " + o.text.replacingOccurrences(of: "\n", with: " ")
             bar.font = .systemFont(ofSize: 11, weight: .semibold)
             bar.textColor = .white
             bar.backgroundColor = Theme.textBar
             bar.layer.cornerRadius = 6
             bar.clipsToBounds = true
-            bar.layer.borderWidth = (o.id == selectedText) ? 2 : 0
-            bar.layer.borderColor = UIColor.white.cgColor
+            if o.id == selectedText {
+                bar.layer.borderWidth = 2
+                bar.layer.borderColor = UIColor.white.cgColor
+                addTrimHandles(to: bar)
+            }
             contentView.addSubview(bar)
-            textFrames.append(bar.frame)
+            textItems.append(Item(id: o.id, frame: bar.frame, view: bar))
+        }
+
+        for (k, a) in audios.enumerated() {
+            let x = side + CGFloat(a.start) * pps
+            let w = max(24, CGFloat(a.duration) * pps)
+            let y = audioBase + CGFloat(al.lane[k]) * laneStep
+            let bar = AudioBarView(frame: CGRect(x: x, y: y, width: w, height: laneHeight))
+            bar.title = a.title
+            bar.offset = a.sourceOffset
+            bar.duration = a.duration
+            bar.peaks = WaveformStore.shared.peaks(for: a.asset) ?? []
+            if a.id == selectedAudio {
+                bar.layer.borderWidth = 2
+                bar.layer.borderColor = UIColor.white.cgColor
+                addTrimHandles(to: bar)
+            }
+            contentView.addSubview(bar)
+            audioItems.append(Item(id: a.id, frame: bar.frame, view: bar))
         }
 
         addTile.frame = CGRect(x: side + CGFloat(totalSeconds) * pps + 10, y: clipTop, width: 56, height: clipHeight)
         contentView.addSubview(addTile)
+
+        let needed = max(TimelineView.minHeight, audioBase + CGFloat(al.count) * laneStep + 8)
+        if abs(needed - requiredHeight) > 0.5 {
+            requiredHeight = needed
+            onNeedHeight?(needed)
+        }
     }
 
     // MARK: Taps
@@ -1742,16 +2442,178 @@ final class TimelineView: UIView, UIScrollViewDelegate {
             onTapTransition?(j)
             return
         }
-        for (k, f) in textFrames.enumerated().reversed() where f.contains(p) {
-            onSelectText?(texts[k].id)
-            return
-        }
         for (i, f) in clipFrames.enumerated().reversed() where f.contains(p) {
-            onSelectClip?(i == selectedClip ? nil : i)
+            if i == selectedClip { onDeselectAll?() } else { onSelectClip?(i) }
             return
         }
-        onSelectClip?(nil)
-        onSelectText?(nil)
+        onDeselectAll?()
+    }
+
+    // MARK: Drag / trim
+
+    private func hitTarget(at p: CGPoint) -> DragKind? {
+        // Ручки выбранного клипа
+        if let s = selectedClip, s < clipFrames.count {
+            let f = clipFrames[s]
+            let hz = min(handleZone, f.width / 3)
+            if p.y >= f.minY && p.y <= f.maxY {
+                if p.x >= f.minX - 8 && p.x <= f.minX + hz { return .clipLeft(s) }
+                if p.x <= f.maxX + 8 && p.x >= f.maxX - hz { return .clipRight(s) }
+            }
+        }
+        for item in textItems.reversed() where item.frame.insetBy(dx: -6, dy: -3).contains(p) {
+            if item.id == selectedText {
+                let hz = min(handleZone, item.frame.width / 3)
+                if p.x <= item.frame.minX + hz { return .textLeft(item.id) }
+                if p.x >= item.frame.maxX - hz { return .textRight(item.id) }
+            }
+            return .textMove(item.id)
+        }
+        for item in audioItems.reversed() where item.frame.insetBy(dx: -6, dy: -3).contains(p) {
+            if item.id == selectedAudio {
+                let hz = min(handleZone, item.frame.width / 3)
+                if p.x <= item.frame.minX + hz { return .audioLeft(item.id) }
+                if p.x >= item.frame.maxX - hz { return .audioRight(item.id) }
+            }
+            return .audioMove(item.id)
+        }
+        return nil
+    }
+
+    override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        if g === press {
+            guard !isUserScrolling else { return false }
+            return hitTarget(at: g.location(in: contentView)) != nil
+        }
+        return true
+    }
+
+    @objc private func handlePress(_ g: UILongPressGestureRecognizer) {
+        let x = g.location(in: contentView).x
+        switch g.state {
+        case .began:
+            if let kind = hitTarget(at: g.location(in: contentView)) { beginDrag(kind, x: x) }
+        case .changed:
+            updateDrag(x: x)
+        case .ended:
+            endDrag(commit: true)
+        case .cancelled, .failed:
+            endDrag(commit: false)
+        default:
+            break
+        }
+    }
+
+    private func beginDrag(_ kind: DragKind, x: CGFloat) {
+        var view: UIView?
+        switch kind {
+        case .clipLeft(let i), .clipRight(let i):
+            view = i < clipViews.count ? clipViews[i] : nil
+        case .textMove(let id), .textLeft(let id), .textRight(let id):
+            view = textItems.first { $0.id == id }?.view
+        case .audioMove(let id), .audioLeft(let id), .audioRight(let id):
+            view = audioItems.first { $0.id == id }?.view
+        }
+        guard let v = view else { return }
+        drag = DragState(kind: kind, startX: x, view: v, origFrame: v.frame)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        v.superview?.bringSubviewToFront(v)
+    }
+
+    private func updateDrag(x: CGFloat) {
+        guard var d = drag else { return }
+        if abs(x - d.startX) > 3 { d.moved = true }
+        let dx = Double((x - d.startX) / pps)
+        let total = totalSeconds
+        let side = bounds.width / 2
+
+        switch d.kind {
+        case .clipLeft(let i), .clipRight(let i):
+            guard i < clips.count else { break }
+            let c = clips[i]
+            let s = Double(c.speed)
+            let s0 = c.sourceRange.start.secs, e0 = c.sourceRange.end.secs
+            let assetDur = floor(c.asset.duration.secs * Double(kTimescale)) / Double(kTimescale)
+            var ns = s0, ne = e0
+            var isLeft = false
+            if case .clipLeft = d.kind { isLeft = true }
+            if isLeft {
+                ns = min(max(0, s0 + dx * s), e0 - minDur * s)
+            } else {
+                ne = max(min(assetDur, e0 + dx * s), s0 + minDur * s)
+            }
+            d.srcRange = CMTimeRange(start: ticks(ns), end: ticks(ne))
+            let w = max(10, CGFloat((ne - ns) / s) * pps - 2)
+            let xx = isLeft ? d.origFrame.maxX - w : d.origFrame.minX
+            d.view.frame = CGRect(x: xx, y: d.origFrame.minY, width: w, height: d.origFrame.height)
+
+        case .textMove(let id), .textLeft(let id), .textRight(let id):
+            guard let o = texts.first(where: { $0.id == id }) else { break }
+            let s0 = o.start, e0 = o.start + o.duration
+            var ns = s0, ne = e0
+            switch d.kind {
+            case .textMove:
+                let len = e0 - s0
+                ns = min(max(0, s0 + dx), max(0, total - len)); ne = ns + len
+            case .textLeft:
+                ns = min(max(0, s0 + dx), e0 - minDur)
+            default:
+                ne = max(min(total, e0 + dx), s0 + minDur)
+            }
+            d.start = ns; d.duration = ne - ns
+            d.view.frame = CGRect(x: side + CGFloat(ns) * pps, y: d.origFrame.minY,
+                                  width: max(24, CGFloat(ne - ns) * pps), height: d.origFrame.height)
+
+        case .audioMove(let id), .audioLeft(let id), .audioRight(let id):
+            guard let a = audios.first(where: { $0.id == id }) else { break }
+            let s0 = a.start, e0 = a.start + a.duration
+            var ns = s0, ne = e0, off = a.sourceOffset
+            switch d.kind {
+            case .audioMove:
+                ns = min(max(0, s0 + dx), max(0, total - a.duration)); ne = ns + a.duration
+            case .audioLeft:
+                // можно тянуть влево только до начала исходного файла
+                let minStart = max(0, s0 - a.sourceOffset)
+                ns = min(max(minStart, s0 + dx), e0 - minDur)
+                off = a.sourceOffset + (ns - s0)
+            default:
+                let maxEnd = min(total, s0 + (a.sourceDuration - a.sourceOffset))
+                ne = max(min(maxEnd, e0 + dx), s0 + minDur)
+            }
+            d.start = ns; d.duration = ne - ns; d.offset = off
+            d.view.frame = CGRect(x: side + CGFloat(ns) * pps, y: d.origFrame.minY,
+                                  width: max(24, CGFloat(ne - ns) * pps), height: d.origFrame.height)
+            if let bar = d.view as? AudioBarView {
+                bar.offset = off
+                bar.duration = ne - ns
+                bar.setNeedsDisplay()
+            }
+        }
+        drag = d
+    }
+
+    private func endDrag(commit: Bool) {
+        guard let d = drag else { return }
+        drag = nil
+        guard commit, d.moved else {
+            if commit {
+                switch d.kind {
+                case .textMove(let id), .textLeft(let id), .textRight(let id): onSelectText?(id)
+                case .audioMove(let id), .audioLeft(let id), .audioRight(let id): onSelectAudio?(id)
+                default: break
+                }
+            }
+            rebuildContent()
+            return
+        }
+        switch d.kind {
+        case .clipLeft(let i), .clipRight(let i):
+            if let r = d.srcRange { onClipTrimmed?(i, r) }
+        case .textMove(let id), .textLeft(let id), .textRight(let id):
+            onTextTimeChanged?(id, d.start, d.duration)
+        case .audioMove(let id), .audioLeft(let id), .audioRight(let id):
+            onAudioTimeChanged?(id, d.start, d.offset, d.duration)
+        }
     }
 
     // MARK: UIScrollViewDelegate
@@ -1770,7 +2632,6 @@ final class TimelineView: UIView, UIScrollViewDelegate {
         onScrub?(t)
     }
 }
-
 // =====================================================================
 // MARK: - Bottom panel (как в нормальных видеоредакторах)
 // =====================================================================
@@ -1781,7 +2642,12 @@ struct PanelItem {
     var badge: String? = nil
     var image: UIImage? = nil
     var swatch: UIColor? = nil
+    var on: Bool? = nil            // для переключателей (курсив, подчёркивание…)
+    var fit: Bool = false          // картинка вписывается целиком (превью текста)
+    var previewKey: String? = nil  // ленивое превью (переходы)
 }
+
+typealias PreviewProvider = (String, @escaping () -> Bool, @escaping (UIImage?) -> Void) -> Void
 
 struct SliderConfig {
     var title: String
@@ -1851,69 +2717,40 @@ final class PanelItemCell: UICollectionViewCell {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(_ item: PanelItem, selected: Bool) {
+    private(set) var currentKey: String?
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        currentKey = nil
+        imageView.image = nil
+    }
+
+    func configure(_ item: PanelItem, selected: Bool, provider: PreviewProvider?) {
         titleLabel.text = item.title
+        currentKey = item.previewKey
+        imageView.contentMode = item.fit ? .scaleAspectFit : .scaleAspectFill
         imageView.image = item.image
-        imageView.isHidden = item.image == nil
+        let hasImage = item.image != nil
+        imageView.isHidden = !(hasImage || item.previewKey != nil)
         iconView.image = item.symbol.flatMap { UIImage(systemName: $0) }
-        iconView.isHidden = item.symbol == nil
+        iconView.isHidden = item.symbol == nil || hasImage
         badgeLabel.text = item.badge
         badgeLabel.isHidden = item.badge == nil
         swatchView.backgroundColor = item.swatch
         swatchView.isHidden = item.swatch == nil
-        box.layer.borderWidth = selected ? 2.5 : 0
-        titleLabel.textColor = selected ? Theme.accent : .lightGray
-    }
-}
+        let hi = selected || item.on == true
+        box.layer.borderWidth = hi ? 2.5 : 0
+        titleLabel.textColor = hi ? Theme.accent : .lightGray
 
-final class ChipsView: UIView {
-    private let scroll = UIScrollView()
-    private let stack = UIStackView()
-    private var buttons: [UIButton] = []
-    var onSelect: ((Int) -> Void)?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        scroll.showsHorizontalScrollIndicator = false
-        addSubview(scroll)
-        scroll.snp.makeConstraints { $0.edges.equalToSuperview() }
-        stack.axis = .horizontal
-        stack.spacing = 8
-        scroll.addSubview(stack)
-        stack.snp.makeConstraints { make in
-            make.edges.equalToSuperview().inset(UIEdgeInsets(top: 3, left: 14, bottom: 3, right: 14))
-            make.height.equalToSuperview().offset(-6)
-        }
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    func configure(titles: [String], selected: Int) {
-        if buttons.count != titles.count {
-            buttons.forEach { $0.removeFromSuperview() }
-            buttons = titles.enumerated().map { (i, t) -> UIButton in
-                let b = UIButton(type: .system)
-                b.setTitle(t, for: .normal)
-                b.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
-                b.layer.cornerRadius = 13
-                b.contentEdgeInsets = UIEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
-                b.tag = i
-                b.addTarget(self, action: #selector(tapped(_:)), for: .touchUpInside)
-                stack.addArrangedSubview(b)
-                return b
+        if item.image == nil, let key = item.previewKey, let provider = provider {
+            provider(key, { [weak self] in self?.currentKey == key }) { [weak self] img in
+                guard let self = self, self.currentKey == key else { return }
+                self.imageView.image = img
+                self.imageView.isHidden = img == nil
+                self.iconView.isHidden = img != nil
             }
         }
-        for (i, b) in buttons.enumerated() {
-            let on = i == selected
-            b.backgroundColor = on ? Theme.accent : Theme.surface
-            b.setTitleColor(on ? .black : .white, for: .normal)
-        }
-        if selected < buttons.count {
-            let f = buttons[selected].frame
-            scroll.scrollRectToVisible(f.insetBy(dx: -30, dy: 0), animated: false)
-        }
     }
-
-    @objc private func tapped(_ b: UIButton) { onSelect?(b.tag) }
 }
 
 final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewDelegate {
@@ -1938,6 +2775,7 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
     var onExtra: (() -> Void)?
     var onChip: ((Int) -> Void)?
     var onSelect: ((Int) -> Void)?
+    var previewProvider: PreviewProvider?
     var onSliderBegan: (() -> Void)?
     var onSliderChanged: ((Float) -> Void)?
     var onSliderEnded: ((Float) -> Void)?
@@ -2076,7 +2914,7 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: PanelItemCell.reuseId, for: indexPath) as! PanelItemCell
-        cell.configure(items[indexPath.item], selected: indexPath.item == selectedIndex)
+        cell.configure(items[indexPath.item], selected: indexPath.item == selectedIndex, provider: previewProvider)
         return cell
     }
 
@@ -2197,13 +3035,542 @@ final class ExportOverlay: UIView {
 
 
 // =====================================================================
+// MARK: - Drafts (черновики)
+// =====================================================================
+
+struct DraftClip: Codable {
+    var id: UUID
+    var file: String
+    var srcStart: Double
+    var srcDuration: Double
+    var speed: Float
+    var filter: Int
+    var filterIntensity: Float
+    var transitionID: Int
+    var transitionDuration: Double
+    var volume: Float
+}
+
+struct DraftAudio: Codable {
+    var id: UUID
+    var file: String
+    var title: String
+    var start: Double
+    var sourceOffset: Double
+    var duration: Double
+    var volume: Float
+}
+
+struct Draft: Codable {
+    var id: UUID
+    var updated: Date
+    var duration: Double
+    var clips: [DraftClip]
+    var texts: [TextOverlay]
+    var audios: [DraftAudio]
+}
+
+final class DraftStore {
+    static let shared = DraftStore()
+
+    let draftsDir: URL
+    let mediaDir: URL
+
+    private init() {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("VideoEditor", isDirectory: true)
+        draftsDir = base.appendingPathComponent("Drafts", isDirectory: true)
+        mediaDir = base.appendingPathComponent("Media", isDirectory: true)
+        try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+    }
+
+    func mediaURL(_ file: String) -> URL { mediaDir.appendingPathComponent(file) }
+    private func jsonURL(_ id: UUID) -> URL { draftsDir.appendingPathComponent("\(id.uuidString).json") }
+    func coverURL(_ id: UUID) -> URL { draftsDir.appendingPathComponent("\(id.uuidString).jpg") }
+
+    /// Копируем файл в постоянное хранилище (tmp система может очистить). Возвращает имя файла.
+    func importMedia(from url: URL, defaultExt: String) -> String? {
+        let ext = url.pathExtension.isEmpty ? defaultExt : url.pathExtension
+        let name = "\(UUID().uuidString).\(ext)"
+        do {
+            try FileManager.default.copyItem(at: url, to: mediaURL(name))
+            return name
+        } catch {
+            return nil
+        }
+    }
+
+    func list() -> [Draft] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: draftsDir, includingPropertiesForKeys: nil)) ?? []
+        let decoder = JSONDecoder()
+        return files.filter { $0.pathExtension == "json" }
+            .compactMap { try? decoder.decode(Draft.self, from: Data(contentsOf: $0)) }
+            .sorted { $0.updated > $1.updated }
+    }
+
+    func save(_ draft: Draft, coverAsset: AVAsset?, coverTime: Double) {
+        if let data = try? JSONEncoder().encode(draft) {
+            try? data.write(to: jsonURL(draft.id), options: .atomic)
+        }
+        guard let asset = coverAsset else { return }
+        let url = coverURL(draft.id)
+        DispatchQueue.global(qos: .utility).async {
+            let gen = AVAssetImageGenerator(asset: asset)
+            gen.appliesPreferredTrackTransform = true
+            gen.maximumSize = CGSize(width: 300, height: 300)
+            if let cg = try? gen.copyCGImage(at: CMTime(seconds: coverTime, preferredTimescale: 600), actualTime: nil),
+               let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.7) {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
+
+    func delete(_ id: UUID) {
+        try? FileManager.default.removeItem(at: jsonURL(id))
+        try? FileManager.default.removeItem(at: coverURL(id))
+    }
+}
+
+final class DraftCell: UITableViewCell {
+    static let reuseId = "DraftCell"
+    let cover = UIImageView()
+    let titleLabel = UILabel()
+    let subLabel = UILabel()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = Theme.background
+        contentView.backgroundColor = Theme.background
+        cover.contentMode = .scaleAspectFill
+        cover.clipsToBounds = true
+        cover.layer.cornerRadius = 8
+        cover.backgroundColor = Theme.surface
+        titleLabel.textColor = .white
+        titleLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        subLabel.textColor = .lightGray
+        subLabel.font = .systemFont(ofSize: 13)
+        contentView.addSubview(cover)
+        contentView.addSubview(titleLabel)
+        contentView.addSubview(subLabel)
+        cover.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(16)
+            make.top.bottom.equalToSuperview().inset(10)
+            make.size.equalTo(76)
+        }
+        titleLabel.snp.makeConstraints { make in
+            make.leading.equalTo(cover.snp.trailing).offset(14)
+            make.trailing.equalToSuperview().inset(16)
+            make.bottom.equalTo(contentView.snp.centerY).offset(-2)
+        }
+        subLabel.snp.makeConstraints { make in
+            make.leading.equalTo(titleLabel)
+            make.trailing.equalToSuperview().inset(16)
+            make.top.equalTo(contentView.snp.centerY).offset(2)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+final class DraftsViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+    var onOpen: ((Draft) -> Void)?
+    var onNew: (() -> Void)?
+    var onDeleted: ((UUID) -> Void)?
+    var currentDraftID: UUID?
+
+    private let tableView = UITableView()
+    private let emptyLabel = UILabel()
+    private var drafts: [Draft] = []
+
+    private lazy var formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "d MMM, HH:mm"
+        return f
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = Theme.background
+
+        let bar = UIView()
+        view.addSubview(bar)
+        bar.snp.makeConstraints { make in
+            make.top.equalTo(view.safeAreaLayoutGuide)
+            make.leading.trailing.equalToSuperview()
+            make.height.equalTo(48)
+        }
+        let close = UIButton(type: .system)
+        close.setTitle("Закрыть", for: .normal)
+        close.tintColor = .white
+        close.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        let title = UILabel()
+        title.text = "Черновики"
+        title.textColor = .white
+        title.font = .systemFont(ofSize: 17, weight: .bold)
+        let new = UIButton(type: .system)
+        new.setTitle("＋ Новый", for: .normal)
+        new.tintColor = Theme.accent
+        new.addTarget(self, action: #selector(newTapped), for: .touchUpInside)
+        [close, title, new].forEach { bar.addSubview($0) }
+        close.snp.makeConstraints { make in make.leading.equalToSuperview().offset(16); make.centerY.equalToSuperview() }
+        title.snp.makeConstraints { $0.center.equalToSuperview() }
+        new.snp.makeConstraints { make in make.trailing.equalToSuperview().inset(16); make.centerY.equalToSuperview() }
+
+        tableView.backgroundColor = Theme.background
+        tableView.separatorColor = UIColor(white: 1, alpha: 0.08)
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.register(DraftCell.self, forCellReuseIdentifier: DraftCell.reuseId)
+        view.addSubview(tableView)
+        tableView.snp.makeConstraints { make in
+            make.top.equalTo(bar.snp.bottom)
+            make.leading.trailing.bottom.equalToSuperview()
+        }
+
+        emptyLabel.text = "Пока нет черновиков.\nНажмите «сохранить» в редакторе —\nи они появятся здесь."
+        emptyLabel.numberOfLines = 0
+        emptyLabel.textAlignment = .center
+        emptyLabel.textColor = .gray
+        view.addSubview(emptyLabel)
+        emptyLabel.snp.makeConstraints { $0.center.equalToSuperview() }
+
+        reload()
+    }
+
+    private func reload() {
+        drafts = DraftStore.shared.list()
+        emptyLabel.isHidden = !drafts.isEmpty
+        tableView.reloadData()
+    }
+
+    @objc private func closeTapped() { dismiss(animated: true) }
+    @objc private func newTapped() {
+        dismiss(animated: true) { [onNew] in onNew?() }
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { drafts.count }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: DraftCell.reuseId, for: indexPath) as! DraftCell
+        let d = drafts[indexPath.row]
+        cell.cover.image = UIImage(contentsOfFile: DraftStore.shared.coverURL(d.id).path)
+        let isCurrent = d.id == currentDraftID
+        cell.titleLabel.text = (isCurrent ? "● " : "") + formatter.string(from: d.updated)
+        let total = Int(d.duration)
+        cell.subLabel.text = String(format: "%d клип., %d:%02d", d.clips.count, total / 60, total % 60)
+            + (d.texts.isEmpty ? "" : " · текст \(d.texts.count)")
+            + (d.audios.isEmpty ? "" : " · аудио \(d.audios.count)")
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        let d = drafts[indexPath.row]
+        onOpen?(d)
+    }
+
+    func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
+        guard editingStyle == .delete else { return }
+        let d = drafts[indexPath.row]
+        DraftStore.shared.delete(d.id)
+        drafts.remove(at: indexPath.row)
+        tableView.deleteRows(at: [indexPath], with: .automatic)
+        emptyLabel.isHidden = !drafts.isEmpty
+        onDeleted?(d.id)
+    }
+}
+
+// =====================================================================
+// MARK: - Waveform (волна аудио на таймлайне)
+// =====================================================================
+
+final class WaveformStore {
+    static let shared = WaveformStore()
+    static let peaksPerSecond = 20
+
+    var onUpdate: (() -> Void)?
+    private var cache: [ObjectIdentifier: [Float]] = [:]
+    private var pending = Set<ObjectIdentifier>()
+
+    func peaks(for asset: AVAsset) -> [Float]? {
+        let key = ObjectIdentifier(asset)
+        if let p = cache[key] { return p }
+        if !pending.contains(key) {
+            pending.insert(key)
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                let result = WaveformStore.compute(asset)
+                DispatchQueue.main.async {
+                    self?.cache[key] = result ?? []
+                    self?.pending.remove(key)
+                    self?.onUpdate?()
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func compute(_ asset: AVAsset) -> [Float]? {
+        guard let track = asset.tracks(withMediaType: .audio).first,
+              let reader = try? AVAssetReader(asset: asset) else { return nil }
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVNumberOfChannelsKey: 1,
+            AVSampleRateKey: 8000
+        ]
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+        guard reader.canAdd(output) else { return nil }
+        reader.add(output)
+        guard reader.startReading() else { return nil }
+
+        let window = 8000 / peaksPerSecond
+        var peaks: [Float] = []
+        var curMax: Int32 = 0
+        var count = 0
+
+        while let sb = output.copyNextSampleBuffer() {
+            guard let block = CMSampleBufferGetDataBuffer(sb) else { continue }
+            let length = CMBlockBufferGetDataLength(block)
+            var data = Data(count: length)
+            data.withUnsafeMutableBytes { raw in
+                if let base = raw.baseAddress {
+                    _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: base)
+                }
+            }
+            data.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+                let samples = buf.bindMemory(to: Int16.self)
+                for s in samples {
+                    let v = abs(Int32(s))
+                    if v > curMax { curMax = v }
+                    count += 1
+                    if count >= window {
+                        peaks.append(Float(curMax) / 32768)
+                        curMax = 0
+                        count = 0
+                    }
+                }
+            }
+            CMSampleBufferInvalidate(sb)
+        }
+        guard !peaks.isEmpty else { return nil }
+        let top = max(0.05, peaks.max() ?? 1)
+        return peaks.map { $0 / top }
+    }
+}
+
+// =====================================================================
+// MARK: - Transition previews (превью перехода на кадрах твоего видео)
+// =====================================================================
+
+final class TransitionPreviewStore {
+    static let shared = TransitionPreviewStore()
+
+    private let queue = DispatchQueue(label: "transition.preview", qos: .userInitiated)
+    private let cache = NSCache<NSString, UIImage>()
+    private let lock = NSLock()
+    private var fromImg: CIImage?
+    private var toImg: CIImage?
+    private var generation = 0
+    private let side: CGFloat = 112
+
+    func setFrames(from: CGImage?, to: CGImage?) {
+        lock.lock()
+        generation += 1
+        fromImg = from.map { fill(CIImage(cgImage: $0)) }
+        toImg = to.map { fill(CIImage(cgImage: $0)) }
+        lock.unlock()
+        cache.removeAllObjects()
+    }
+
+    private func fill(_ img: CIImage) -> CIImage {
+        let e = img.extent
+        let s = max(side / e.width, side / e.height)
+        let w = e.width * s, h = e.height * s
+        return img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+            .transformed(by: CGAffineTransform(scaleX: s, y: s))
+            .transformed(by: CGAffineTransform(translationX: (side - w) / 2, y: (side - h) / 2))
+            .cropped(to: CGRect(x: 0, y: 0, width: side, height: side))
+    }
+
+    /// key: "t<id>". Результат приходит в main.
+    func image(for key: String, isValid: @escaping () -> Bool, completion: @escaping (UIImage?) -> Void) {
+        if let cached = cache.object(forKey: key as NSString) { completion(cached); return }
+        lock.lock(); let gen = generation; let f = fromImg; let t = toImg; lock.unlock()
+        guard f != nil, t != nil, let id = Int(key.dropFirst()) else { completion(nil); return }
+
+        queue.async { [weak self] in
+            guard let self = self, isValid(), let f = f, let t = t, let spec = TransitionCatalog.spec(id) else { return }
+            let rect = CGRect(x: 0, y: 0, width: self.side, height: self.side)
+            var p: CGFloat = 0.45
+            if case .dip = spec.base { p = 0.3 }
+            let out = TransitionRenderer.render(id: id, from: f, to: t, t: p, rect: rect)
+            var image: UIImage?
+            if let cg = EditorCompositor.ciContext.createCGImage(out, from: rect) { image = UIImage(cgImage: cg) }
+            DispatchQueue.main.async {
+                self.lock.lock(); let same = (gen == self.generation); self.lock.unlock()
+                guard same else { return }
+                if let image = image { self.cache.setObject(image, forKey: key as NSString) }
+                completion(image)
+            }
+        }
+    }
+}
+
+// =====================================================================
+// MARK: - Text input (современный ввод текста, несколько строк)
+// =====================================================================
+
+final class TextInputView: UIView, UITextViewDelegate {
+    var onDone: ((String) -> Void)?
+
+    private let dim = UIView()
+    private let card = UIView()
+    private let textView = UITextView()
+    private let placeholder = UILabel()
+    private let doneButton = UIButton(type: .system)
+    private var cardBottom: Constraint!
+    private weak var parent: UIView?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+
+        dim.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        dim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(cancelTapped)))
+        addSubview(dim)
+        dim.snp.makeConstraints { $0.edges.equalToSuperview() }
+
+        card.backgroundColor = UIColor(white: 0.12, alpha: 1)
+        card.layer.cornerRadius = 18
+        card.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        addSubview(card)
+        card.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview()
+            cardBottom = make.bottom.equalToSuperview().constraint
+        }
+
+        let cancel = UIButton(type: .system)
+        cancel.setTitle("Отмена", for: .normal)
+        cancel.tintColor = .lightGray
+        cancel.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+        let title = UILabel()
+        title.text = "Текст"
+        title.textColor = .white
+        title.font = .systemFont(ofSize: 16, weight: .semibold)
+        doneButton.setTitle("Готово", for: .normal)
+        doneButton.tintColor = Theme.accent
+        doneButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .bold)
+        doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+
+        textView.backgroundColor = UIColor(white: 0.2, alpha: 1)
+        textView.textColor = .white
+        textView.tintColor = Theme.accent
+        textView.font = .systemFont(ofSize: 20, weight: .medium)
+        textView.layer.cornerRadius = 12
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
+        textView.returnKeyType = .default      // Enter = новая строка
+        textView.delegate = self
+
+        placeholder.text = "Введите текст…\nEnter — новая строка"
+        placeholder.numberOfLines = 2
+        placeholder.textColor = UIColor(white: 1, alpha: 0.35)
+        placeholder.font = .systemFont(ofSize: 17)
+        placeholder.isUserInteractionEnabled = false
+
+        [cancel, title, doneButton, textView].forEach { card.addSubview($0) }
+        textView.addSubview(placeholder)
+        cancel.snp.makeConstraints { make in make.top.equalToSuperview().offset(6); make.leading.equalToSuperview().offset(12); make.height.equalTo(40) }
+        title.snp.makeConstraints { make in make.centerY.equalTo(cancel); make.centerX.equalToSuperview() }
+        doneButton.snp.makeConstraints { make in make.centerY.equalTo(cancel); make.trailing.equalToSuperview().inset(12) }
+        textView.snp.makeConstraints { make in
+            make.top.equalTo(cancel.snp.bottom).offset(6)
+            make.leading.trailing.equalToSuperview().inset(14)
+            make.height.equalTo(130)
+            make.bottom.equalToSuperview().inset(14)
+        }
+        placeholder.snp.makeConstraints { make in make.top.equalToSuperview().offset(12); make.leading.equalToSuperview().offset(15) }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func show(in parent: UIView, text: String) {
+        self.parent = parent
+        frame = parent.bounds
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        parent.addSubview(self)
+        textView.text = text
+        updateState()
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
+                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        alpha = 0
+        UIView.animate(withDuration: 0.2) { self.alpha = 1 }
+        textView.becomeFirstResponder()
+        textView.selectedTextRange = textView.textRange(from: textView.endOfDocument, to: textView.endOfDocument)
+    }
+
+    private func updateState() {
+        placeholder.isHidden = !textView.text.isEmpty
+        let empty = textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        doneButton.isEnabled = !empty
+        doneButton.alpha = empty ? 0.4 : 1
+    }
+
+    func textViewDidChange(_ textView: UITextView) { updateState() }
+
+    @objc private func keyboardChanged(_ n: Notification) {
+        guard let end = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
+        let inSelf = convert(end, from: nil)
+        let h = max(0, bounds.maxY - inSelf.minY)
+        let d = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        cardBottom.update(offset: -h)
+        UIView.animate(withDuration: d) { self.layoutIfNeeded() }
+    }
+
+    @objc private func cancelTapped() { close() }
+
+    @objc private func doneTapped() {
+        let text = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        close()
+        if !text.isEmpty { onDone?(text) }
+    }
+
+    private func close() {
+        NotificationCenter.default.removeObserver(self)
+        textView.resignFirstResponder()
+        UIView.animate(withDuration: 0.2, animations: { self.alpha = 0 }) { _ in self.removeFromSuperview() }
+    }
+}
+
+// =====================================================================
 // MARK: - Main ViewController
 // =====================================================================
 
 final class ViewController: UIViewController {
 
     private enum PanelKind { case speed, filter, transition, text, audio }
-    private struct Snapshot { var clips: [VideoClip]; var texts: [TextOverlay] }
+
+    private enum TextTab: Int, CaseIterable {
+        case text, styles, font, fill, stroke, shadow, shadowColor, glow, box, format, animIn, animOut
+        var title: String {
+            switch self {
+            case .text: return "Текст"
+            case .styles: return "Стили"
+            case .font: return "Шрифт"
+            case .fill: return "Цвет"
+            case .stroke: return "Обводка"
+            case .shadow: return "Тень"
+            case .shadowColor: return "Цвет тени"
+            case .glow: return "Свечение"
+            case .box: return "Фон"
+            case .format: return "Формат"
+            case .animIn: return "Появление"
+            case .animOut: return "Исчезание"
+            }
+        }
+    }
+
+    private struct Snapshot { var clips: [VideoClip]; var texts: [TextOverlay]; var audios: [AudioClip] }
 
     // UI
     private let topBar = UIView()
@@ -2218,8 +3585,10 @@ final class ViewController: UIViewController {
     private let textBox = UIView()
     private let emptyLabel = UILabel()
     private let loader = UIActivityIndicatorView(style: .large)
+    private let textInput = TextInputView()
     private var toolCollection: UICollectionView!
     private var bottomHeightConstraint: NSLayoutConstraint!
+    private var timelineHeightConstraint: NSLayoutConstraint!
     private var playerLayer: AVPlayerLayer!
     private var toastLabel: PaddingLabel?
     private var exportOverlay: ExportOverlay?
@@ -2227,11 +3596,12 @@ final class ViewController: UIViewController {
     // State
     private var clips: [VideoClip] = []
     private var texts: [TextOverlay] = []
+    private var audios: [AudioClip] = []
     private var selectedClipIndex: Int?
     private var selectedTextID: UUID?
-    private var music: AVAsset?
-    private var musicVolume: Float = 0.8
+    private var selectedAudioID: UUID?
     private var undoStack: [Snapshot] = []
+    private var currentDraftID: UUID?
 
     private var build: EditorBuild?
     private var renderSize = CGSize(width: 1080, height: 1920)
@@ -2244,10 +3614,13 @@ final class ViewController: UIViewController {
     private var previewToken = 0
 
     private var activePanel: PanelKind?
+    private var textTab: TextTab = .text
     private var transitionBoundary = 0
     private var transitionCategory: TransitionCategory = .all
+    private var previewPairKey: String?
     private var filterPreviews: [FilterType: UIImage] = [:]
     private var filterPreviewClipID: UUID?
+    private var textPreviewCache: [String: UIImage] = [:]
 
     private var exportSession: AVAssetExportSession?
     private var exportTimer: Timer?
@@ -2257,6 +3630,7 @@ final class ViewController: UIViewController {
 
     private var totalSeconds: Double { build?.layout.total.secs ?? 0 }
     private var selectedText: TextOverlay? { texts.first { $0.id == selectedTextID } }
+    private var selectedAudio: AudioClip? { audios.first { $0.id == selectedAudioID } }
 
     // MARK: Lifecycle
 
@@ -2267,7 +3641,9 @@ final class ViewController: UIViewController {
         setupCallbacks()
         updateUndoButton()
         updateEmptyState()
-        timelineView.reload(clips: [], layout: TimelineLayout(clips: []), texts: [], selectedClip: nil, selectedText: nil)
+        reloadTimeline()
+        NotificationCenter.default.addObserver(self, selector: #selector(appWillResign),
+                                               name: UIApplication.willResignActiveNotification, object: nil)
     }
 
     override func viewDidLayoutSubviews() {
@@ -2282,12 +3658,17 @@ final class ViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         pausePlayback()
+        if presentedViewController == nil { saveDraft(silent: true) }
     }
 
     deinit {
         if let t = timeObserver { player.removeTimeObserver(t) }
         NotificationCenter.default.removeObserver(self)
         exportTimer?.invalidate()
+    }
+
+    @objc private func appWillResign() {
+        saveDraft(silent: true)   // авто-сохранение, чтобы прогресс не терялся
     }
 
     // MARK: Layout
@@ -2302,13 +3683,24 @@ final class ViewController: UIViewController {
             make.height.equalTo(44)
         }
 
-        let closeButton = UIButton(type: .system)
-        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
-        closeButton.tintColor = .white
-        closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
-        topBar.addSubview(closeButton)
-        closeButton.snp.makeConstraints { make in
+        let saveButton = UIButton(type: .system)
+        saveButton.setImage(UIImage(systemName: "tray.and.arrow.down"), for: .normal)
+        saveButton.tintColor = .white
+        saveButton.addTarget(self, action: #selector(didTapSaveDraft), for: .touchUpInside)
+        topBar.addSubview(saveButton)
+        saveButton.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(8)
+            make.centerY.equalToSuperview()
+            make.size.equalTo(44)
+        }
+
+        let draftsButton = UIButton(type: .system)
+        draftsButton.setImage(UIImage(systemName: "folder"), for: .normal)
+        draftsButton.tintColor = .white
+        draftsButton.addTarget(self, action: #selector(didTapDrafts), for: .touchUpInside)
+        topBar.addSubview(draftsButton)
+        draftsButton.snp.makeConstraints { make in
+            make.leading.equalTo(saveButton.snp.trailing)
             make.centerY.equalToSuperview()
             make.size.equalTo(44)
         }
@@ -2371,10 +3763,17 @@ final class ViewController: UIViewController {
         loader.snp.makeConstraints { $0.center.equalToSuperview() }
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handlePlayerTap(_:)))
+        tap.delegate = self
         playerContainer.addGestureRecognizer(tap)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePlayerPan(_:)))
         pan.delegate = self
         playerContainer.addGestureRecognizer(pan)
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePlayerPinch(_:)))
+        pinch.delegate = self
+        playerContainer.addGestureRecognizer(pinch)
+        let rotate = UIRotationGestureRecognizer(target: self, action: #selector(handlePlayerRotate(_:)))
+        rotate.delegate = self
+        playerContainer.addGestureRecognizer(rotate)
 
         // Control bar
         controlBar.snp.makeConstraints { make in
@@ -2399,12 +3798,13 @@ final class ViewController: UIViewController {
             make.size.equalTo(40)
         }
 
-        // Timeline
+        // Timeline (высота растёт вместе с количеством дорожек текста/аудио)
         timelineView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
-            make.height.equalTo(TimelineView.preferredHeight)
             make.bottom.equalTo(bottomContainer.snp.top)
         }
+        timelineHeightConstraint = timelineView.heightAnchor.constraint(equalToConstant: TimelineView.minHeight)
+        timelineHeightConstraint.isActive = true
 
         // Bottom: либо панель инструментов, либо панель редактирования
         bottomContainer.backgroundColor = Theme.panel
@@ -2454,32 +3854,52 @@ final class ViewController: UIViewController {
         }
         timelineView.onScrub = { [weak self] seconds in self?.scrub(to: seconds) }
         timelineView.onSelectClip = { [weak self] index in self?.selectClip(index) }
-        timelineView.onSelectText = { [weak self] id in
-            if let id = id { self?.selectText(id) } else if self?.selectedTextID != nil { self?.deselectText() }
-        }
+        timelineView.onSelectText = { [weak self] id in self?.selectText(id) }
+        timelineView.onSelectAudio = { [weak self] id in self?.selectAudio(id) }
+        timelineView.onDeselectAll = { [weak self] in self?.deselectAll() }
         timelineView.onTapAdd = { [weak self] in self?.didTapAddVideo() }
         timelineView.onTapTransition = { [weak self] j in
             guard let self = self else { return }
             self.transitionBoundary = j
+            self.clearSelection()
             self.selectedClipIndex = j
-            self.selectedTextID = nil
             self.reloadTimeline()
             self.openPanel(.transition)
         }
+        timelineView.onClipTrimmed = { [weak self] i, range in self?.commitClipTrim(i, range) }
+        timelineView.onTextTimeChanged = { [weak self] id, s, d in self?.commitTextTime(id, start: s, duration: d) }
+        timelineView.onAudioTimeChanged = { [weak self] id, s, off, d in self?.commitAudioTime(id, start: s, offset: off, duration: d) }
+        timelineView.onNeedHeight = { [weak self] h in self?.setTimelineHeight(h) }
 
         panel.onClose = { [weak self] in self?.closePanel() }
         panel.onSelect = { [weak self] index in self?.handlePanelSelect(index) }
         panel.onChip = { [weak self] index in
             guard let self = self else { return }
-            self.transitionCategory = TransitionCategory.allCases[index]
+            if self.activePanel == .transition {
+                self.transitionCategory = TransitionCategory.allCases[index]
+            } else if self.activePanel == .text, let tab = TextTab(rawValue: index) {
+                self.textTab = tab
+            }
             self.refreshActivePanel(keepScroll: false)
         }
         panel.onExtra = { [weak self] in self?.applyTransitionToAll() }
         panel.onSliderBegan = { [weak self] in self?.sliderBegan() }
         panel.onSliderChanged = { [weak self] v in self?.sliderChanged(v) }
         panel.onSliderEnded = { [weak self] v in self?.sliderEnded(v) }
+        panel.previewProvider = { key, isValid, completion in
+            TransitionPreviewStore.shared.image(for: key, isValid: isValid, completion: completion)
+        }
 
         ThumbnailStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
+        WaveformStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
+    }
+
+    private func setTimelineHeight(_ h: CGFloat) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, abs(self.timelineHeightConstraint.constant - h) > 0.5 else { return }
+            self.timelineHeightConstraint.constant = h
+            UIView.animate(withDuration: 0.2) { self.view.layoutIfNeeded() }
+        }
     }
 
     // MARK: Player ticks / seeking
@@ -2492,9 +3912,7 @@ final class ViewController: UIViewController {
         updateTextBox()
     }
 
-    @objc private func playerDidFinish() {
-        updatePlayButton()
-    }
+    @objc private func playerDidFinish() { updatePlayButton() }
 
     private func scrub(to seconds: Double) {
         previewToken += 1
@@ -2556,7 +3974,45 @@ final class ViewController: UIViewController {
         }
     }
 
+    /// Проиграть кусок таймлайна (для предпросмотра перехода / анимации текста).
+    private func playRange(from: Double, until: Double) {
+        previewToken += 1
+        let token = previewToken
+        player.seek(to: ticks(max(0, from)), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self = self, token == self.previewToken else { return }
+                self.player.play()
+                self.updatePlayButton()
+                DispatchQueue.main.asyncAfter(deadline: .now() + max(0.2, until - from)) { [weak self] in
+                    guard let self = self, token == self.previewToken else { return }
+                    self.pausePlayback()
+                }
+            }
+        }
+    }
+
     // MARK: Rebuild engine
+
+    /// Всё, что живёт «под видео», обязано укладываться в длину видео.
+    private func clampOverlays(total: Double) {
+        guard !clips.isEmpty else { texts = []; audios = []; return }
+        texts = texts.map { o in
+            var o = o
+            o.start = max(0, min(o.start, total - 0.3))
+            o.duration = max(0.1, min(o.duration, total - o.start))
+            return o
+        }
+        audios = audios.compactMap { a in
+            var a = a
+            a.start = max(0, min(a.start, total - 0.3))
+            let maxDur = min(total - a.start, a.sourceDuration - a.sourceOffset)
+            guard maxDur >= 0.1 else { return nil }
+            a.duration = min(a.duration, maxDur)
+            return a
+        }
+        if let id = selectedTextID, !texts.contains(where: { $0.id == id }) { selectedTextID = nil }
+        if let id = selectedAudioID, !audios.contains(where: { $0.id == id }) { selectedAudioID = nil }
+    }
 
     /// Полная пересборка (меняется структура: клипы, скорость, переходы, звук).
     private func rebuild(seekTo target: CMTime? = nil) {
@@ -2565,6 +4021,7 @@ final class ViewController: UIViewController {
         isSeeking = false
         pendingSeek = nil
         if let s = selectedClipIndex, s >= clips.count { selectedClipIndex = nil }
+        clampOverlays(total: TimelineLayout(clips: clips).total.secs)
         clips.forEach { ThumbnailStore.shared.prepare($0.asset) }
         updateEmptyState()
 
@@ -2580,7 +4037,7 @@ final class ViewController: UIViewController {
             return
         }
 
-        guard let b = EditorBuild.make(clips: clips, music: music, musicVolume: musicVolume) else {
+        guard let b = EditorBuild.make(clips: clips, audios: audios) else {
             showToast("Не удалось собрать видео")
             return
         }
@@ -2614,11 +4071,13 @@ final class ViewController: UIViewController {
         timelineView.reload(clips: clips,
                             layout: build?.layout ?? TimelineLayout(clips: []),
                             texts: texts,
+                            audios: audios,
                             selectedClip: selectedClipIndex,
-                            selectedText: selectedTextID)
+                            selectedText: selectedTextID,
+                            selectedAudio: selectedAudioID)
     }
 
-    /// Миниатюры догружаются в фоне — не трогаем ленту, пока человек её крутит.
+    /// Миниатюры и волны догружаются в фоне — не трогаем ленту, пока человек её крутит.
     private func reloadTimelineWhenIdle() {
         if timelineView.isUserScrolling {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.reloadTimelineWhenIdle() }
@@ -2634,7 +4093,7 @@ final class ViewController: UIViewController {
     // MARK: Undo
 
     private func pushUndo() {
-        undoStack.append(Snapshot(clips: clips, texts: texts))
+        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios))
         if undoStack.count > 50 { undoStack.removeFirst() }
         updateUndoButton()
     }
@@ -2647,34 +4106,31 @@ final class ViewController: UIViewController {
         guard let s = undoStack.popLast() else { showToast("Нечего отменять"); return }
         clips = s.clips
         texts = s.texts
-        selectedClipIndex = nil
-        selectedTextID = nil
+        audios = s.audios
+        clearSelection()
         filterPreviewClipID = nil
         rebuild()
         refreshActivePanel()
         updateUndoButton()
     }
 
-    @objc private func didTapClose() {
-        pausePlayback()
-        if let nav = navigationController, nav.viewControllers.count > 1 {
-            nav.popViewController(animated: true)
-        } else {
-            dismiss(animated: true)
-        }
-    }
-
     // MARK: Selection
+
+    private func clearSelection() {
+        selectedClipIndex = nil
+        selectedTextID = nil
+        selectedAudioID = nil
+    }
 
     private func currentClipIndex() -> Int? {
         if let i = selectedClipIndex, i < clips.count { return i }
         return build?.layout.index(at: ticks(displayTime))
     }
 
-    private func selectClip(_ index: Int?) {
+    private func selectClip(_ index: Int) {
+        clearSelection()
         selectedClipIndex = index
-        if index != nil { selectedTextID = nil }
-        if let i = index, clips.count > 1 { transitionBoundary = min(i, clips.count - 2) }
+        if clips.count > 1 { transitionBoundary = min(index, clips.count - 2) }
         reloadTimeline()
         updateTextBox()
         refreshActivePanel()
@@ -2682,8 +4138,8 @@ final class ViewController: UIViewController {
 
     private func selectText(_ id: UUID) {
         guard let o = texts.first(where: { $0.id == id }) else { return }
+        clearSelection()
         selectedTextID = id
-        selectedClipIndex = nil
         if displayTime < o.start || displayTime >= o.start + o.duration {
             let s = min(o.start + 0.01, totalSeconds)
             seekTo(ticks(s))
@@ -2695,15 +4151,24 @@ final class ViewController: UIViewController {
         refreshActivePanel()
     }
 
-    private func deselectText() {
-        selectedTextID = nil
+    private func selectAudio(_ id: UUID) {
+        guard audios.contains(where: { $0.id == id }) else { return }
+        clearSelection()
+        selectedAudioID = id
+        reloadTimeline()
+        updateTextBox()
+        refreshActivePanel()
+    }
+
+    private func deselectAll() {
+        clearSelection()
         reloadTimeline()
         updateTextBox()
         refreshActivePanel()
     }
 
     private func ensureSelection() {
-        if selectedClipIndex == nil, selectedTextID == nil, let i = currentClipIndex() {
+        if selectedClipIndex == nil, selectedTextID == nil, selectedAudioID == nil, let i = currentClipIndex() {
             selectedClipIndex = i
             if clips.count > 1 { transitionBoundary = min(i, clips.count - 2) }
             reloadTimeline()
@@ -2723,8 +4188,9 @@ final class ViewController: UIViewController {
         case .transition: openTransitionPanel()
         case .text:
             guard !clips.isEmpty else { showToast("Сначала добавьте видео"); return }
+            textTab = .text
             openPanel(.text)
-            if texts.isEmpty { promptText(editing: nil) }
+            if texts.isEmpty { presentTextInput(editing: nil) }
         case .audio:
             guard !clips.isEmpty else { showToast("Сначала добавьте видео"); return }
             openPanel(.audio)
@@ -2734,6 +4200,7 @@ final class ViewController: UIViewController {
     private func openClipPanel(_ kind: PanelKind) {
         guard !clips.isEmpty else { showToast("Сначала добавьте видео"); return }
         ensureSelection()
+        if selectedClipIndex == nil, let i = currentClipIndex() { selectedClipIndex = i; reloadTimeline() }
         openPanel(kind)
     }
 
@@ -2742,7 +4209,6 @@ final class ViewController: UIViewController {
             showToast("Для перехода нужно минимум 2 клипа — разрежьте видео или добавьте ещё")
             return
         }
-        // Выбираем ближайший к красной палке стык
         var bestJ = 0
         var bestDist = Double.infinity
         for j in 0..<(clips.count - 1) {
@@ -2751,8 +4217,8 @@ final class ViewController: UIViewController {
         }
         if let s = selectedClipIndex { bestJ = min(s, clips.count - 2) }
         transitionBoundary = bestJ
+        clearSelection()
         selectedClipIndex = bestJ
-        selectedTextID = nil
         reloadTimeline()
         openPanel(.transition)
     }
@@ -2794,24 +4260,31 @@ final class ViewController: UIViewController {
 
         clips[i] = first
         clips.insert(second, at: i + 1)
-        selectedClipIndex = nil
-        selectedTextID = nil
+        clearSelection()
         rebuild(seekTo: ticks(t))
         refreshActivePanel()
     }
 
     private func deleteCurrent() {
-        if let id = selectedTextID, selectedClipIndex == nil {
+        if let id = selectedTextID {
             pushUndo()
             texts.removeAll { $0.id == id }
             selectedTextID = nil
             textsChanged()
             return
         }
+        if let id = selectedAudioID {
+            pushUndo()
+            audios.removeAll { $0.id == id }
+            selectedAudioID = nil
+            rebuild()
+            refreshActivePanel()
+            return
+        }
         guard let i = currentClipIndex() else { showToast("Нечего удалять"); return }
         pushUndo()
         clips.remove(at: i)
-        selectedClipIndex = nil
+        clearSelection()
         filterPreviewClipID = nil
         rebuild()
         refreshActivePanel()
@@ -2824,8 +4297,44 @@ final class ViewController: UIViewController {
         copy.id = UUID()
         copy.transitionID = 0
         clips.insert(copy, at: i + 1)
+        clearSelection()
         selectedClipIndex = i + 1
         rebuild()
+    }
+
+    // MARK: Timeline commits (перетаскивание / обрезка за края)
+
+    private func commitClipTrim(_ i: Int, _ range: CMTimeRange) {
+        guard i < clips.count else { return }
+        pushUndo()
+        clips[i].sourceRange = range
+        clearSelection()
+        selectedClipIndex = i
+        filterPreviewClipID = nil
+        rebuild()
+        refreshActivePanel()
+    }
+
+    private func commitTextTime(_ id: UUID, start: Double, duration: Double) {
+        guard let idx = texts.firstIndex(where: { $0.id == id }) else { return }
+        pushUndo()
+        texts[idx].start = start
+        texts[idx].duration = duration
+        clearSelection()
+        selectedTextID = id
+        textsChanged()
+    }
+
+    private func commitAudioTime(_ id: UUID, start: Double, offset: Double, duration: Double) {
+        guard let idx = audios.firstIndex(where: { $0.id == id }) else { return }
+        pushUndo()
+        audios[idx].start = start
+        audios[idx].sourceOffset = offset
+        audios[idx].duration = duration
+        clearSelection()
+        selectedAudioID = id
+        rebuild()
+        refreshActivePanel()
     }
 
     // MARK: Bottom panel
@@ -2859,22 +4368,26 @@ final class ViewController: UIViewController {
             guard let i = currentClipIndex() else { closePanel(); return }
             let items = speeds.map { PanelItem(title: $0 == 1 ? "Обычная" : "\($0)x", badge: String(format: "%gx", Double($0))) }
             let sel = speeds.firstIndex { abs($0 - clips[i].speed) < 0.01 }
-            panel.configure(title: "Скорость · клип \(i + 1)", items: items, selected: sel, slider: nil)
+            panel.configure(title: "Скорость · клип \(i + 1)", items: items, selected: sel, slider: nil, keepScroll: keepScroll)
 
         case .filter:
             guard let i = currentClipIndex() else { closePanel(); return }
-            let items = FilterType.allCases.map { PanelItem(title: $0.displayName, symbol: filterPreviews[$0] == nil ? "camera.filters" : nil, image: filterPreviews[$0]) }
+            let items = FilterType.allCases.map {
+                PanelItem(title: $0.displayName, symbol: filterPreviews[$0] == nil ? "camera.filters" : nil, image: filterPreviews[$0])
+            }
             let sel = FilterType.allCases.firstIndex(of: clips[i].filter)
             let cfg = SliderConfig(title: "Сила", min: 0, max: 1, value: clips[i].filterIntensity) { "\(Int($0 * 100))%" }
-            panel.configure(title: "Фильтр · клип \(i + 1)", items: items, selected: sel, slider: clips[i].filter == .none ? nil : cfg)
+            panel.configure(title: "Фильтр · клип \(i + 1)", items: items, selected: sel,
+                            slider: clips[i].filter == .none ? nil : cfg, keepScroll: keepScroll)
 
         case .transition:
             guard clips.count >= 2 else { closePanel(); return }
             let j = min(transitionBoundary, clips.count - 2)
             transitionBoundary = j
+            updateTransitionPreviewFrames()
             let list = TransitionCatalog.list(transitionCategory)
             var items = [PanelItem(title: "Нет", symbol: "xmark"), PanelItem(title: "Случайный", symbol: "shuffle")]
-            items += list.map { PanelItem(title: $0.name, symbol: $0.category.symbol) }
+            items += list.map { PanelItem(title: $0.name, symbol: $0.category.symbol, previewKey: "t\($0.id)") }
             let curID = clips[j].transitionID
             let sel: Int? = curID == 0 ? 0 : list.firstIndex(where: { $0.id == curID }).map { $0 + 2 }
             let cfg = SliderConfig(title: "Длительность", min: 0.2, max: 1.5, value: Float(clips[j].transitionDuration)) {
@@ -2888,33 +4401,22 @@ final class ViewController: UIViewController {
                             extra: curID == 0 ? nil : "Ко всем", keepScroll: keepScroll)
 
         case .text:
-            var items = [
-                PanelItem(title: "Добавить", symbol: "plus"),
-                PanelItem(title: "Изменить", symbol: "pencil"),
-                PanelItem(title: "Удалить", symbol: "trash"),
-                PanelItem(title: "−1 сек", symbol: "minus"),
-                PanelItem(title: "+1 сек", symbol: "plus.circle")
-            ]
-            items += TextStyle.colors.map { PanelItem(title: "Цвет", swatch: $0) }
-            var sel: Int?
-            var cfg: SliderConfig?
-            if let t = selectedText {
-                sel = 5 + t.colorIndex
-                cfg = SliderConfig(title: "Размер", min: 0.03, max: 0.12, value: Float(t.size)) {
-                    "\(Int(($0 - 0.03) / 0.09 * 100))%"
-                }
-            }
-            panel.configure(title: selectedText == nil ? "Текст · выберите текст на дорожке" : "Текст", items: items, selected: sel, slider: cfg)
+            refreshTextPanel(keepScroll: keepScroll)
 
         case .audio:
             let muted = (currentClipIndex().map { clips[$0].volume == 0 }) ?? false
             let items = [
-                PanelItem(title: "Добавить музыку", symbol: "music.note"),
-                PanelItem(title: "Убрать музыку", symbol: "trash"),
-                PanelItem(title: muted ? "Включить звук" : "Выкл. звук клипа", symbol: muted ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                PanelItem(title: "Добавить аудио", symbol: "music.note"),
+                PanelItem(title: "Удалить аудио", symbol: "trash"),
+                PanelItem(title: muted ? "Включить звук видео" : "Выкл. звук видео",
+                          symbol: muted ? "speaker.wave.2.fill" : "speaker.slash.fill")
             ]
-            let cfg = SliderConfig(title: "Музыка", min: 0, max: 1, value: musicVolume) { "\(Int($0 * 100))%" }
-            panel.configure(title: "Звук", items: items, selected: nil, slider: music == nil ? nil : cfg)
+            var cfg: SliderConfig?
+            if let a = selectedAudio {
+                cfg = SliderConfig(title: "Громкость", min: 0, max: 1, value: a.volume) { "\(Int($0 * 100))%" }
+            }
+            let title = selectedAudio.map { "Аудио · \($0.title)" } ?? "Звук · выберите аудио на дорожке"
+            panel.configure(title: title, items: items, selected: nil, slider: cfg, keepScroll: keepScroll)
         }
         setBottomHeight(panel.preferredHeight)
     }
@@ -2989,12 +4491,52 @@ final class ViewController: UIViewController {
         }
     }
 
-    // Slider callbacks
+    /// Кадры «конец клипа A» и «начало клипа B» — на них строятся превью всех переходов.
+    private func updateTransitionPreviewFrames() {
+        guard clips.count >= 2 else { return }
+        let j = min(transitionBoundary, clips.count - 2)
+        let a = clips[j], b = clips[j + 1]
+        let key = "\(a.id)-\(a.sourceRange.end.value)-\(b.id)-\(b.sourceRange.start.value)"
+        if key == previewPairKey { return }
+        previewPairKey = key
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            func frame(_ c: VideoClip, atEnd: Bool) -> CGImage? {
+                let g = AVAssetImageGenerator(asset: c.asset)
+                g.appliesPreferredTrackTransform = true
+                g.maximumSize = CGSize(width: 240, height: 240)
+                g.requestedTimeToleranceBefore = .positiveInfinity
+                g.requestedTimeToleranceAfter = .positiveInfinity
+                let s = c.sourceRange.start.secs, e = c.sourceRange.end.secs
+                let t = atEnd ? max(s, e - 0.15) : min(e, s + 0.15)
+                return try? g.copyCGImage(at: CMTime(seconds: t, preferredTimescale: 600), actualTime: nil)
+            }
+            let f = frame(a, atEnd: true)
+            let t = frame(b, atEnd: false)
+            DispatchQueue.main.async {
+                guard let self = self, self.previewPairKey == key else { return }
+                TransitionPreviewStore.shared.setFrames(from: f, to: t)
+                if self.activePanel == .transition { self.refreshActivePanel() }
+            }
+        }
+    }
+
+    // MARK: Slider callbacks
+
     private func sliderBegan() {
         switch activePanel {
-        case .filter?, .text?, .transition?: pushUndo()
+        case .filter?, .transition?: pushUndo()
+        case .text?: if selectedTextID != nil { pushUndo() }
+        case .audio?: if selectedAudioID != nil { pushUndo() }
         default: break
         }
+    }
+
+    private func mutateTextLive(_ f: (inout TextOverlay) -> Void) {
+        guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else { return }
+        f(&texts[idx])
+        refreshVideoComposition()
+        updateTextBox()
     }
 
     private func sliderChanged(_ v: Float) {
@@ -3004,16 +4546,19 @@ final class ViewController: UIViewController {
             clips[i].filterIntensity = v
             refreshVideoComposition()
         case .transition?:
-            let j = min(transitionBoundary, max(0, clips.count - 2))
             guard clips.count >= 2 else { return }
-            clips[j].transitionDuration = Double(v)
+            clips[min(transitionBoundary, clips.count - 2)].transitionDuration = Double(v)
         case .text?:
-            guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else { return }
-            texts[idx].size = CGFloat(v)
-            refreshVideoComposition()
-            updateTextBox()
+            switch textTab {
+            case .text: mutateTextLive { $0.size = CGFloat(v) }
+            case .stroke: mutateTextLive { $0.strokeWidth = CGFloat(v) }
+            case .box: mutateTextLive { $0.boxOpacity = Double(v) }
+            case .format: mutateTextLive { $0.letterSpacing = CGFloat(v) }
+            case .animIn, .animOut: mutateTextLive { $0.animDuration = Double(v) }
+            default: break
+            }
         case .audio?:
-            musicVolume = v
+            if let id = selectedAudioID, let idx = audios.firstIndex(where: { $0.id == id }) { audios[idx].volume = v }
         default: break
         }
     }
@@ -3027,10 +4572,15 @@ final class ViewController: UIViewController {
             previewTransition(j)
         case .audio?:
             rebuild()
+        case .text?:
+            reloadTimeline()
+            if (textTab == .animIn || textTab == .animOut), let o = selectedText { previewText(o) }
         default:
             reloadTimeline()
         }
     }
+
+    // MARK: Transition helpers
 
     private func applyTransitionToAll() {
         guard clips.count >= 2 else { return }
@@ -3058,70 +4608,222 @@ final class ViewController: UIViewController {
             timelineView.setPlayhead(time: tStart, force: true)
             return
         }
-        let from = max(0, tStart - 0.8)
-        let until = tStart + ov + 0.6
-        previewToken += 1
-        let token = previewToken
-        player.seek(to: ticks(from), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-            DispatchQueue.main.async {
-                guard let self = self, token == self.previewToken else { return }
-                self.player.play()
-                self.updatePlayButton()
-                DispatchQueue.main.asyncAfter(deadline: .now() + (until - from)) { [weak self] in
-                    guard let self = self, token == self.previewToken else { return }
-                    self.pausePlayback()
+        playRange(from: max(0, tStart - 0.8), until: tStart + ov + 0.6)
+    }
+
+    // MARK: Text panel
+
+    private func textSample(_ key: String, _ build: (inout TextOverlay) -> Void) -> UIImage {
+        if let c = textPreviewCache[key] { return c }
+        var o = TextOverlay(text: "Aa", start: 0, duration: 1)
+        o.size = 0.3
+        build(&o)
+        let img = TextRenderer.uiImage(for: o, canvas: CGSize(width: 150, height: 150))
+        textPreviewCache[key] = img
+        return img
+    }
+
+    private func refreshTextPanel(keepScroll: Bool) {
+        let t = selectedText
+        let swatches = TextPalette.colors.map { PanelItem(title: "", swatch: $0) }
+        let noneItem = PanelItem(title: "Нет", symbol: "xmark")
+        var items: [PanelItem] = []
+        var sel: Int?
+        var cfg: SliderConfig?
+
+        switch textTab {
+        case .text:
+            items = [
+                PanelItem(title: "Добавить", symbol: "plus"),
+                PanelItem(title: "Изменить", symbol: "pencil"),
+                PanelItem(title: "Дубль", symbol: "plus.square.on.square"),
+                PanelItem(title: "Удалить", symbol: "trash")
+            ]
+            if let t = t {
+                cfg = SliderConfig(title: "Размер", min: 0.02, max: 0.3, value: Float(t.size)) {
+                    String(format: "%.0f%%", Double($0) / 0.3 * 100)
+                }
+            }
+
+        case .styles:
+            for (i, p) in TextPresets.all.enumerated() {
+                items.append(PanelItem(title: p.title, image: textSample("preset\(i)") { p.apply(&$0) }, fit: true))
+            }
+
+        case .font:
+            for (i, f) in TextFonts.all.enumerated() {
+                items.append(PanelItem(title: f.title, image: textSample("font\(i)") { $0.fontIndex = i }, fit: true))
+            }
+            sel = t?.fontIndex
+
+        case .fill:
+            items = swatches
+            sel = t?.fillIndex
+
+        case .stroke:
+            items = [noneItem] + swatches
+            if let t = t {
+                sel = t.strokeIndex < 0 ? 0 : t.strokeIndex + 1
+                if t.strokeIndex >= 0 {
+                    cfg = SliderConfig(title: "Толщина", min: 0.02, max: 0.2, value: Float(t.strokeWidth)) {
+                        String(format: "%.0f%%", Double($0) / 0.2 * 100)
+                    }
+                }
+            }
+
+        case .shadow:
+            for (i, s) in TextShadow.allCases.enumerated() {
+                items.append(PanelItem(title: s.title, image: textSample("shadow\(i)") {
+                    $0.shadow = i; $0.shadowColorIndex = TextPalette.vivid(320)
+                }, fit: true))
+            }
+            sel = t?.shadow
+
+        case .shadowColor:
+            items = swatches
+            sel = t?.shadowColorIndex
+
+        case .glow:
+            items = [noneItem] + swatches
+            if let t = t { sel = t.glowIndex < 0 ? 0 : t.glowIndex + 1 }
+
+        case .box:
+            items = [noneItem] + swatches
+            if let t = t {
+                sel = t.boxIndex < 0 ? 0 : t.boxIndex + 1
+                if t.boxIndex >= 0 {
+                    cfg = SliderConfig(title: "Прозрачн.", min: 0.1, max: 1, value: Float(t.boxOpacity)) {
+                        "\(Int($0 * 100))%"
+                    }
+                }
+            }
+
+        case .format:
+            for (i, w) in TextFonts.weights.enumerated() {
+                items.append(PanelItem(title: w.0, badge: "Aa", on: t.map { $0.weight == i }))
+            }
+            items.append(PanelItem(title: "Курсив", symbol: "italic", on: t?.italic))
+            items.append(PanelItem(title: "Подчёрк.", symbol: "underline", on: t?.underline))
+            items.append(PanelItem(title: "Зачёрк.", symbol: "strikethrough", on: t?.strike))
+            items.append(PanelItem(title: "Влево", symbol: "text.alignleft", on: t.map { $0.alignment == 0 }))
+            items.append(PanelItem(title: "Центр", symbol: "text.aligncenter", on: t.map { $0.alignment == 1 }))
+            items.append(PanelItem(title: "Вправо", symbol: "text.alignright", on: t.map { $0.alignment == 2 }))
+            if let t = t {
+                cfg = SliderConfig(title: "Интервал", min: -0.05, max: 0.5, value: Float(t.letterSpacing)) {
+                    String(format: "%.2f", Double($0))
+                }
+            }
+
+        case .animIn, .animOut:
+            items = TextAnim.allCases.map { PanelItem(title: $0.title, symbol: $0.symbol) }
+            if let t = t {
+                sel = textTab == .animIn ? t.animIn : t.animOut
+                if sel != 0 {
+                    cfg = SliderConfig(title: "Длит.", min: 0.2, max: 2, value: Float(t.animDuration)) {
+                        String(format: "%.1fс", Double($0))
+                    }
                 }
             }
         }
+
+        let title: String
+        if t == nil && textTab != .text { title = "Выберите текст на дорожке или нажмите на него в видео" }
+        else { title = textTab.title }
+        panel.configure(title: title, items: items, selected: sel, slider: cfg,
+                        chips: TextTab.allCases.map { $0.title }, selectedChip: textTab.rawValue,
+                        keepScroll: keepScroll)
     }
 
-    // MARK: Text
+    private func mutateSelectedText(_ f: (inout TextOverlay) -> Void) {
+        guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else {
+            showToast("Сначала выберите текст на дорожке под видео")
+            return
+        }
+        pushUndo()
+        f(&texts[idx])
+        textsChanged()
+    }
 
     private func handleTextPanel(_ index: Int) {
-        switch index {
-        case 0:
-            promptText(editing: nil)
-        case 1:
-            guard let t = selectedText else { showToast("Выберите текст на дорожке под клипами"); return }
-            promptText(editing: t)
-        case 2:
-            guard let id = selectedTextID else { showToast("Выберите текст на дорожке под клипами"); return }
-            pushUndo()
-            texts.removeAll { $0.id == id }
-            selectedTextID = nil
-            textsChanged()
-        case 3, 4:
-            guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else {
-                showToast("Выберите текст на дорожке под клипами"); return
+        switch textTab {
+        case .text:
+            switch index {
+            case 0: presentTextInput(editing: nil)
+            case 1:
+                guard let t = selectedText else { showToast("Выберите текст на дорожке под видео"); return }
+                presentTextInput(editing: t)
+            case 2:
+                guard var t = selectedText else { showToast("Выберите текст на дорожке под видео"); return }
+                pushUndo()
+                t.id = UUID()
+                t.position.y = min(0.95, t.position.y + 0.08)
+                texts.append(t)
+                selectedTextID = t.id
+                textsChanged()
+            default:
+                guard let id = selectedTextID else { showToast("Выберите текст на дорожке под видео"); return }
+                pushUndo()
+                texts.removeAll { $0.id == id }
+                selectedTextID = nil
+                textsChanged()
             }
-            pushUndo()
-            let delta: Double = index == 3 ? -1 : 1
-            texts[idx].duration = max(0.5, texts[idx].duration + delta)
-            textsChanged()
-        default:
-            guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else {
-                showToast("Сначала выберите текст"); return
+
+        case .styles:
+            guard index < TextPresets.all.count else { return }
+            mutateSelectedText { TextPresets.all[index].apply(&$0) }
+        case .font:
+            mutateSelectedText { $0.fontIndex = index }
+        case .fill:
+            mutateSelectedText { $0.fillIndex = index }
+        case .stroke:
+            mutateSelectedText {
+                if index == 0 { $0.strokeIndex = -1 } else { $0.strokeIndex = index - 1; if $0.strokeWidth < 0.02 { $0.strokeWidth = 0.08 } }
             }
-            pushUndo()
-            texts[idx].colorIndex = index - 5
-            textsChanged()
+        case .shadow:
+            mutateSelectedText { $0.shadow = index }
+        case .shadowColor:
+            mutateSelectedText { $0.shadowColorIndex = index }
+        case .glow:
+            mutateSelectedText { $0.glowIndex = index == 0 ? -1 : index - 1 }
+        case .box:
+            mutateSelectedText { $0.boxIndex = index == 0 ? -1 : index - 1 }
+        case .format:
+            mutateSelectedText {
+                switch index {
+                case 0..<8: $0.weight = index
+                case 8: $0.italic.toggle()
+                case 9: $0.underline.toggle()
+                case 10: $0.strike.toggle()
+                case 11: $0.alignment = 0
+                case 12: $0.alignment = 1
+                default: $0.alignment = 2
+                }
+            }
+        case .animIn:
+            mutateSelectedText { $0.animIn = index }
+            if let o = selectedText { previewText(o) }
+        case .animOut:
+            mutateSelectedText { $0.animOut = index }
+            if let o = selectedText { previewText(o) }
         }
     }
 
-    private func promptText(editing: TextOverlay?) {
-        let alert = UIAlertController(title: editing == nil ? "Новый текст" : "Изменить текст", message: nil, preferredStyle: .alert)
-        alert.addTextField { tf in
-            tf.text = editing?.text
-            tf.placeholder = "Введите текст"
-            tf.autocapitalizationType = .sentences
+    private func previewText(_ o: TextOverlay) {
+        let d = min(o.animDuration, o.duration / 2)
+        if textTab == .animOut {
+            let end = o.start + o.duration
+            playRange(from: max(0, end - d - 0.8), until: end + 0.15)
+        } else {
+            playRange(from: max(0, o.start - 0.3), until: o.start + d + 0.9)
         }
-        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Готово", style: .default) { [weak self, weak alert] _ in
-            let text = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !text.isEmpty else { return }
-            self?.commitText(text, editing: editing)
-        })
-        present(alert, animated: true)
+    }
+
+    // MARK: Text editing
+
+    private func presentTextInput(editing: TextOverlay?) {
+        pausePlayback()
+        textInput.onDone = { [weak self] text in self?.commitText(text, editing: editing) }
+        textInput.show(in: view, text: editing?.text ?? "")
     }
 
     private func commitText(_ text: String, editing: TextOverlay?) {
@@ -3132,10 +4834,11 @@ final class ViewController: UIViewController {
             let total = totalSeconds
             let start = min(displayTime, max(0, total - 0.5))
             let dur = max(0.5, min(3, total - start))
-            let o = TextOverlay(text: text, start: start, duration: dur)
+            var o = TextOverlay(text: text, start: start, duration: dur)
+            o.size = 0.06
             texts.append(o)
+            clearSelection()
             selectedTextID = o.id
-            selectedClipIndex = nil
         }
         textsChanged()
     }
@@ -3159,14 +4862,12 @@ final class ViewController: UIViewController {
         return CGRect(x: (c.width - w) / 2, y: (c.height - h) / 2, width: w, height: h)
     }
 
-    private func textFrame(_ o: TextOverlay) -> CGRect {
+    private func textGeometry(_ o: TextOverlay) -> (center: CGPoint, size: CGSize) {
         let vr = videoRectInPlayer()
         let px = TextRenderer.pixelSize(for: o, canvas: renderSize)
         let k = vr.height / max(1, renderSize.height)
-        let w = px.width * k, h = px.height * k
-        return CGRect(x: vr.minX + o.position.x * vr.width - w / 2,
-                      y: vr.minY + o.position.y * vr.height - h / 2,
-                      width: w, height: h)
+        return (CGPoint(x: vr.minX + o.position.x * vr.width, y: vr.minY + o.position.y * vr.height),
+                CGSize(width: px.width * k, height: px.height * k))
     }
 
     private func updateTextBox() {
@@ -3174,7 +4875,11 @@ final class ViewController: UIViewController {
             textBox.isHidden = true
             return
         }
-        textBox.frame = textFrame(o)
+        let g = textGeometry(o)
+        textBox.transform = .identity
+        textBox.bounds = CGRect(origin: .zero, size: g.size)
+        textBox.center = g.center
+        textBox.transform = CGAffineTransform(rotationAngle: o.rotation)
         textBox.isHidden = false
         playerContainer.bringSubviewToFront(textBox)
     }
@@ -3182,12 +4887,16 @@ final class ViewController: UIViewController {
     @objc private func handlePlayerTap(_ g: UITapGestureRecognizer) {
         let p = g.location(in: playerContainer)
         for o in texts.reversed() where isVisible(o, at: displayTime) {
-            if textFrame(o).insetBy(dx: -10, dy: -10).contains(p) {
+            let geo = textGeometry(o)
+            let dx = p.x - geo.center.x, dy = p.y - geo.center.y
+            let c = cos(-o.rotation), s = sin(-o.rotation)
+            let lx = dx * c - dy * s, ly = dx * s + dy * c
+            if abs(lx) <= geo.size.width / 2 + 10 && abs(ly) <= geo.size.height / 2 + 10 {
                 selectText(o.id)
                 return
             }
         }
-        if selectedTextID != nil { deselectText(); return }
+        if selectedTextID != nil { deselectAll(); return }
         togglePlay()
     }
 
@@ -3206,17 +4915,40 @@ final class ViewController: UIViewController {
         updateTextBox()
     }
 
+    @objc private func handlePlayerPinch(_ g: UIPinchGestureRecognizer) {
+        guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else { return }
+        if g.state == .began { pushUndo() }
+        guard g.state == .changed else { return }
+        texts[idx].size = min(0.4, max(0.02, texts[idx].size * g.scale))
+        g.scale = 1
+        refreshVideoComposition()
+        updateTextBox()
+    }
+
+    @objc private func handlePlayerRotate(_ g: UIRotationGestureRecognizer) {
+        guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else { return }
+        if g.state == .began { pushUndo() }
+        guard g.state == .changed else { return }
+        texts[idx].rotation += g.rotation
+        g.rotation = 0
+        refreshVideoComposition()
+        updateTextBox()
+    }
+
     // MARK: Audio
 
     private func handleAudioPanel(_ index: Int) {
         switch index {
         case 0:
+            guard totalSeconds > 0.2 else { showToast("Сначала добавьте видео"); return }
             let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio], asCopy: true)
             picker.delegate = self
             present(picker, animated: true)
         case 1:
-            guard music != nil else { showToast("Музыка не добавлена"); return }
-            music = nil
+            guard let id = selectedAudioID else { showToast("Выберите аудио на дорожке под видео"); return }
+            pushUndo()
+            audios.removeAll { $0.id == id }
+            selectedAudioID = nil
             rebuild()
             refreshActivePanel()
         default:
@@ -3226,6 +4958,30 @@ final class ViewController: UIViewController {
             rebuild()
             refreshActivePanel()
         }
+    }
+
+    fileprivate func addAudio(from url: URL) {
+        guard totalSeconds > 0.2 else { showToast("Сначала добавьте видео"); return }
+        guard let file = DraftStore.shared.importMedia(from: url, defaultExt: "m4a") else {
+            showToast("Не удалось загрузить аудио")
+            return
+        }
+        let asset = AVAsset(url: DraftStore.shared.mediaURL(file))
+        let srcDur = floor(asset.duration.secs * Double(kTimescale)) / Double(kTimescale)
+        guard asset.tracks(withMediaType: .audio).first != nil, srcDur > 0.2 else {
+            showToast("В файле нет звука")
+            return
+        }
+        let start = min(displayTime, max(0, totalSeconds - 0.5))
+        let dur = min(srcDur, totalSeconds - start)
+        let a = AudioClip(asset: asset, file: file, title: url.deletingPathExtension().lastPathComponent,
+                          start: start, duration: dur, sourceDuration: srcDur)
+        pushUndo()
+        audios.append(a)
+        clearSelection()
+        selectedAudioID = a.id
+        rebuild()
+        refreshActivePanel()
     }
 
     // MARK: Add video
@@ -3256,14 +5012,12 @@ final class ViewController: UIViewController {
             group.enter()
             r.itemProvider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, error in
                 defer { group.leave() }
-                guard let url = url, error == nil else { return }
-                let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
-                let dest = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).\(ext)")
-                do { try FileManager.default.copyItem(at: url, to: dest) } catch { return }
-                let asset = AVAsset(url: dest)
+                guard let url = url, error == nil,
+                      let file = DraftStore.shared.importMedia(from: url, defaultExt: "mov") else { return }
+                let asset = AVAsset(url: DraftStore.shared.mediaURL(file))
                 let dur = floorTicks(asset.duration.secs)
                 guard dur.secs > 0.1, asset.tracks(withMediaType: .video).first != nil else { return }
-                collector.set(idx, VideoClip(asset: asset, sourceRange: CMTimeRange(start: .zero, duration: dur)))
+                collector.set(idx, VideoClip(asset: asset, file: file, sourceRange: CMTimeRange(start: .zero, duration: dur)))
             }
         }
 
@@ -3277,6 +5031,109 @@ final class ViewController: UIViewController {
             self.clips.append(contentsOf: newClips)
             self.rebuild(seekTo: resumeTime)
         }
+    }
+
+    // MARK: Drafts
+
+    private func makeDraft(id: UUID) -> Draft {
+        Draft(id: id, updated: Date(), duration: totalSeconds,
+              clips: clips.map {
+                  DraftClip(id: $0.id, file: $0.file, srcStart: $0.sourceRange.start.secs,
+                            srcDuration: $0.sourceRange.duration.secs, speed: $0.speed, filter: $0.filter.rawValue,
+                            filterIntensity: $0.filterIntensity, transitionID: $0.transitionID,
+                            transitionDuration: $0.transitionDuration, volume: $0.volume)
+              },
+              texts: texts,
+              audios: audios.map {
+                  DraftAudio(id: $0.id, file: $0.file, title: $0.title, start: $0.start,
+                             sourceOffset: $0.sourceOffset, duration: $0.duration, volume: $0.volume)
+              })
+    }
+
+    private func saveDraft(silent: Bool) {
+        guard !clips.isEmpty else { return }
+        let id = currentDraftID ?? UUID()
+        currentDraftID = id
+        let first = clips[0]
+        DraftStore.shared.save(makeDraft(id: id), coverAsset: first.asset, coverTime: first.sourceRange.start.secs + 0.05)
+        if !silent { showToast("Черновик сохранён") }
+    }
+
+    @objc private func didTapSaveDraft() {
+        guard !clips.isEmpty else { showToast("Добавьте видео, чтобы сохранить черновик"); return }
+        saveDraft(silent: false)
+    }
+
+    @objc private func didTapDrafts() {
+        pausePlayback()
+        saveDraft(silent: true)
+        let vc = DraftsViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.currentDraftID = currentDraftID
+        vc.onOpen = { [weak self] draft in
+            self?.dismiss(animated: true) { self?.loadDraft(draft) }
+        }
+        vc.onNew = { [weak self] in self?.newProject() }
+        vc.onDeleted = { [weak self] id in
+            if self?.currentDraftID == id { self?.currentDraftID = nil }
+        }
+        present(vc, animated: true)
+    }
+
+    private func newProject() {
+        pausePlayback()
+        closePanel()
+        clips = []; texts = []; audios = []
+        clearSelection()
+        undoStack = []
+        updateUndoButton()
+        currentDraftID = nil
+        filterPreviewClipID = nil
+        previewPairKey = nil
+        rebuild(seekTo: .zero)
+    }
+
+    private func loadDraft(_ d: Draft) {
+        pausePlayback()
+        closePanel()
+        var loadedClips: [VideoClip] = []
+        for c in d.clips {
+            let url = DraftStore.shared.mediaURL(c.file)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            var clip = VideoClip(asset: AVAsset(url: url), file: c.file,
+                                 sourceRange: CMTimeRange(start: ticks(c.srcStart), duration: ticks(c.srcDuration)))
+            clip.id = c.id
+            clip.speed = c.speed
+            clip.filter = FilterType(rawValue: c.filter) ?? .none
+            clip.filterIntensity = c.filterIntensity
+            clip.transitionID = c.transitionID
+            clip.transitionDuration = c.transitionDuration
+            clip.volume = c.volume
+            loadedClips.append(clip)
+        }
+        var loadedAudios: [AudioClip] = []
+        for a in d.audios {
+            let url = DraftStore.shared.mediaURL(a.file)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            let asset = AVAsset(url: url)
+            let srcDur = floor(asset.duration.secs * Double(kTimescale)) / Double(kTimescale)
+            var clip = AudioClip(asset: asset, file: a.file, title: a.title, start: a.start,
+                                 sourceOffset: a.sourceOffset, duration: a.duration, sourceDuration: srcDur)
+            clip.id = a.id
+            clip.volume = a.volume
+            loadedAudios.append(clip)
+        }
+        clips = loadedClips
+        texts = d.texts
+        audios = loadedAudios
+        clearSelection()
+        undoStack = []
+        updateUndoButton()
+        currentDraftID = d.id
+        filterPreviewClipID = nil
+        previewPairKey = nil
+        rebuild(seekTo: .zero)
+        if loadedClips.count < d.clips.count { showToast("Часть файлов черновика не найдена") }
     }
 
     // MARK: Export
@@ -3414,9 +5271,17 @@ extension ViewController: UICollectionViewDataSource, UICollectionViewDelegate {
 }
 
 extension ViewController: UIGestureRecognizerDelegate {
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        if gestureRecognizer is UIPanGestureRecognizer { return selectedText != nil }
+    private func isTransformGesture(_ g: UIGestureRecognizer) -> Bool {
+        g is UIPanGestureRecognizer || g is UIPinchGestureRecognizer || g is UIRotationGestureRecognizer
+    }
+
+    func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        if isTransformGesture(g) { return selectedText != nil }
         return true
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        isTransformGesture(g) && isTransformGesture(other)
     }
 }
 
@@ -3428,10 +5293,56 @@ extension ViewController: PHPickerViewControllerDelegate, UIDocumentPickerDelega
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first else { return }
-        let local = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).\(url.pathExtension)")
-        try? FileManager.default.copyItem(at: url, to: local)
-        music = AVAsset(url: local)
-        rebuild()
-        refreshActivePanel()
+        addAudio(from: url)
     }
+}
+
+final class ChipsView: UIView {
+    private let scroll = UIScrollView()
+    private let stack = UIStackView()
+    private var buttons: [UIButton] = []
+    var onSelect: ((Int) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        scroll.showsHorizontalScrollIndicator = false
+        addSubview(scroll)
+        scroll.snp.makeConstraints { $0.edges.equalToSuperview() }
+        stack.axis = .horizontal
+        stack.spacing = 8
+        scroll.addSubview(stack)
+        stack.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(UIEdgeInsets(top: 3, left: 14, bottom: 3, right: 14))
+            make.height.equalToSuperview().offset(-6)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(titles: [String], selected: Int) {
+        if buttons.count != titles.count {
+            buttons.forEach { $0.removeFromSuperview() }
+            buttons = titles.enumerated().map { (i, t) -> UIButton in
+                let b = UIButton(type: .system)
+                b.setTitle(t, for: .normal)
+                b.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
+                b.layer.cornerRadius = 13
+                b.contentEdgeInsets = UIEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
+                b.tag = i
+                b.addTarget(self, action: #selector(tapped(_:)), for: .touchUpInside)
+                stack.addArrangedSubview(b)
+                return b
+            }
+        }
+        for (i, b) in buttons.enumerated() {
+            let on = i == selected
+            b.backgroundColor = on ? Theme.accent : Theme.surface
+            b.setTitleColor(on ? .black : .white, for: .normal)
+        }
+        if selected < buttons.count {
+            let f = buttons[selected].frame
+            scroll.scrollRectToVisible(f.insetBy(dx: -30, dy: 0), animated: false)
+        }
+    }
+
+    @objc private func tapped(_ b: UIButton) { onSelect?(b.tag) }
 }
