@@ -5,6 +5,8 @@ import CoreMedia
 import PhotosUI
 import Photos
 import UniformTypeIdentifiers
+import Vision
+import Speech
 import SnapKit
 
 // =====================================================================
@@ -50,112 +52,47 @@ func imageOrientation(for t: CGAffineTransform) -> CGImagePropertyOrientation {
 }
 
 // =====================================================================
-// MARK: - Filters (у каждого клипа свой)
-// =====================================================================
-
-enum FilterType: Int, CaseIterable {
-    case none, vivid, warm, cool, sepia, noir, mono, chrome, fade, instant, process, transfer, tonal, vignette, dramatic, bright
-
-    var displayName: String {
-        switch self {
-        case .none: return "Оригинал"
-        case .vivid: return "Яркий"
-        case .warm: return "Тёплый"
-        case .cool: return "Холодный"
-        case .sepia: return "Сепия"
-        case .noir: return "Нуар"
-        case .mono: return "Моно"
-        case .chrome: return "Хром"
-        case .fade: return "Выцвет"
-        case .instant: return "Инстант"
-        case .process: return "Процесс"
-        case .transfer: return "Ретро"
-        case .tonal: return "Тональный"
-        case .vignette: return "Виньетка"
-        case .dramatic: return "Драма"
-        case .bright: return "Светлый"
-        }
-    }
-
-    func apply(to input: CIImage) -> CIImage {
-        let extent = input.extent
-
-        func run(_ name: String, _ params: [String: Any] = [:], on image: CIImage? = nil) -> CIImage {
-            let source = image ?? input
-            guard let f = CIFilter(name: name) else { return source }
-            f.setValue(source, forKey: kCIInputImageKey)
-            for (k, v) in params where f.inputKeys.contains(k) { f.setValue(v, forKey: k) }
-            return f.outputImage?.cropped(to: extent) ?? source
-        }
-
-        switch self {
-        case .none:
-            return input
-        case .vivid:
-            return run("CIColorControls", [kCIInputSaturationKey: 1.55, kCIInputContrastKey: 1.1])
-        case .warm:
-            return run("CIColorMatrix", [
-                "inputRVector": CIVector(x: 1.12, y: 0, z: 0, w: 0),
-                "inputGVector": CIVector(x: 0, y: 1.02, z: 0, w: 0),
-                "inputBVector": CIVector(x: 0, y: 0, z: 0.86, w: 0),
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
-                "inputBiasVector": CIVector(x: 0.02, y: 0.01, z: 0, w: 0)
-            ])
-        case .cool:
-            return run("CIColorMatrix", [
-                "inputRVector": CIVector(x: 0.88, y: 0, z: 0, w: 0),
-                "inputGVector": CIVector(x: 0, y: 1.0, z: 0, w: 0),
-                "inputBVector": CIVector(x: 0, y: 0, z: 1.15, w: 0),
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
-                "inputBiasVector": CIVector(x: 0, y: 0.01, z: 0.03, w: 0)
-            ])
-        case .sepia:
-            return run("CISepiaTone", [kCIInputIntensityKey: 0.9])
-        case .noir:
-            return run("CIPhotoEffectNoir")
-        case .mono:
-            return run("CIPhotoEffectMono")
-        case .chrome:
-            return run("CIPhotoEffectChrome")
-        case .fade:
-            return run("CIPhotoEffectFade")
-        case .instant:
-            return run("CIPhotoEffectInstant")
-        case .process:
-            return run("CIPhotoEffectProcess")
-        case .transfer:
-            return run("CIPhotoEffectTransfer")
-        case .tonal:
-            return run("CIPhotoEffectTonal")
-        case .vignette:
-            return run("CIVignette", [kCIInputIntensityKey: 1.3, kCIInputRadiusKey: 1.6])
-        case .dramatic:
-            let c = run("CIColorControls", [kCIInputContrastKey: 1.3, kCIInputSaturationKey: 0.8])
-            return run("CIVignette", [kCIInputIntensityKey: 1.0, kCIInputRadiusKey: 1.8], on: c)
-        case .bright:
-            return run("CIColorControls", [kCIInputBrightnessKey: 0.1, kCIInputContrastKey: 1.05, kCIInputSaturationKey: 1.1])
-        }
-    }
-}
-
-// =====================================================================
 // MARK: - Models
 // =====================================================================
 
 struct VideoClip {
     var id = UUID()
-    let asset: AVAsset
+    var asset: AVAsset
     /// Имя файла в постоянном хранилище (нужно для черновиков).
     var file: String = ""
+    /// Клип-картинка (внутри — «видео» из одного кадра, поэтому её тоже можно растягивать).
+    var isImage: Bool = false
     /// Какой кусок исходника используем (в шкале 600).
     var sourceRange: CMTimeRange
     var speed: Float = 1.0
-    var filter: FilterType = .none
+
+    // Цвет
+    var filterID: Int = 0                 // 0 — без фильтра, иначе номер из FilterCatalog
     var filterIntensity: Float = 1.0
-    /// Переход ПОСЛЕ этого клипа (между ним и следующим). 0 = нет.
+    var adjust = Adjustments()            // ручная настройка поверх фильтра
+    var look: Int = 0                     // живой эффект (VideoLook)
+
+    // Геометрия
+    var flipH = false
+    var flipV = false
+    var rotation: Double = 0              // градусы по часовой
+    var zoom: Double = 1
+
+    // Фон (вырезание человека)
+    var bgMode: Int = 0                   // 0 нет, 1 фото, 2 размытие, 3 цвет
+    var bgFile: String? = nil
+    var bgColor: Int = 0
+
+    // Переход ПОСЛЕ этого клипа (между ним и следующим). 0 = нет.
     var transitionID: Int = 0
     var transitionDuration: Double = 0.6
-    var volume: Float = 1.0
+
+    // Звук клипа (у каждого куска свой)
+    var volume: Float = 1.0               // 0 = без звука, до 3 = усиление
+    var audioEffect: Int = 0
+    var fadeIn: Double = 0
+    var fadeOut: Double = 0
+    var processedAudio: AVAsset? = nil    // звук после эффекта (не сохраняется, пересоздаётся)
 
     /// Длительность клипа на таймлайне (с учётом скорости).
     var displayDuration: CMTime {
@@ -175,9 +112,61 @@ struct AudioClip {
     var sourceOffset: Double = 0
     /// Сколько играем (сек).
     var duration: Double
-    var volume: Float = 1.0
+    var volume: Float = 1.0               // до 3 = усиление
+    var effect: Int = 0
+    var fadeIn: Double = 0
+    var fadeOut: Double = 0
+    var processed: AVAsset? = nil
     /// Полная длина исходного файла.
     let sourceDuration: Double
+}
+
+// MARK: Формат кадра и настройки проекта
+
+struct AspectPreset {
+    let title: String
+    let w: Double
+    let h: Double
+}
+
+enum AspectPresets {
+    /// w = 0 — взять формат первого клипа.
+    static let all: [AspectPreset] = [
+        AspectPreset(title: "Оригинал", w: 0, h: 0),
+        AspectPreset(title: "9:16", w: 9, h: 16),
+        AspectPreset(title: "16:9", w: 16, h: 9),
+        AspectPreset(title: "1:1", w: 1, h: 1),
+        AspectPreset(title: "4:5", w: 4, h: 5),
+        AspectPreset(title: "5:4", w: 5, h: 4),
+        AspectPreset(title: "3:4", w: 3, h: 4),
+        AspectPreset(title: "4:3", w: 4, h: 3),
+        AspectPreset(title: "2:3", w: 2, h: 3),
+        AspectPreset(title: "3:2", w: 3, h: 2),
+        AspectPreset(title: "21:9", w: 21, h: 9),
+        AspectPreset(title: "2.35:1", w: 2.35, h: 1),
+        AspectPreset(title: "1.91:1", w: 1.91, h: 1)
+    ]
+}
+
+struct ProjectSettings: Codable, Equatable {
+    var aspectIndex = 0
+    var customW: Double = 0
+    var customH: Double = 0
+    var fillMode = 0                  // 0 вписать, 1 заполнить (с обрезкой)
+    var blurBackground = true         // размытый фон при «вписать»
+    var introID = 0
+    var introDuration = 0.6
+    var outroID = 0
+    var outroDuration = 0.6
+
+    var customActive: Bool { customW > 0 && customH > 0 }
+
+    /// nil — «оригинал».
+    var ratio: Double? {
+        if customActive { return customW / customH }
+        let p = AspectPresets.all[max(0, min(aspectIndex, AspectPresets.all.count - 1))]
+        return p.w > 0 ? p.w / p.h : nil
+    }
 }
 
 struct TextOverlay: Codable {
@@ -268,7 +257,482 @@ struct TimelineLayout {
 }
 
 // =====================================================================
-// MARK: - Transition catalog (3500+ переходов из «конструктора»)
+// MARK: - Color adjustments (общий «движок» и для фильтров, и для ручной настройки)
+// =====================================================================
+
+struct Adjustments: Codable, Equatable {
+    var brightness: Double = 0        // -1...1
+    var contrast: Double = 0          // -1...1
+    var saturation: Double = 0        // -1...1
+    var vibrance: Double = 0          // -1...1
+    var warmth: Double = 0            // -1...1 (холоднее ↔ теплее)
+    var tint: Double = 0              // -1...1 (зелёный ↔ пурпурный)
+    var highlights: Double = 0        // -1...1
+    var shadows: Double = 0           // -1...1
+    var hue: Double = 0               // -1...1  (±180°)
+    var fade: Double = 0              // 0...1   (матовые чёрные)
+    var sharpen: Double = 0           // 0...1
+    var vignette: Double = 0          // 0...1
+    var grain: Double = 0             // 0...1
+    var retouch: Double = 0           // 0...1   (смягчение кожи)
+    var glow: Double = 0              // 0...1
+    var blur: Double = 0              // 0...1
+    var curveShadows: Double = 0      // -1...1
+    var curveMid: Double = 0          // -1...1
+    var curveHigh: Double = 0         // -1...1
+    var shadowTone: Double = 0        // оттенок в тенях 0...1 (круг цветов)
+    var shadowToneAmount: Double = 0  // 0...1
+    var highTone: Double = 0          // оттенок в светах
+    var highToneAmount: Double = 0
+    /// 8 каналов (красный, оранжевый, жёлтый, зелёный, голубой, синий, фиолетовый, розовый) × (оттенок, насыщенность, яркость)
+    var hsl: [Double] = Array(repeating: 0, count: 24)
+
+    var isIdentity: Bool { self == Adjustments() }
+    var needsCube: Bool { shadowToneAmount != 0 || highToneAmount != 0 || hsl.contains { $0 != 0 } }
+}
+
+enum HSLChannel {
+    static let titles = ["Красный", "Оранж.", "Жёлтый", "Зелёный", "Голубой", "Синий", "Фиолет.", "Розовый"]
+    static let degrees: [Double] = [0, 30, 60, 120, 180, 225, 275, 320]
+    static let colors: [UIColor] = degrees.map { UIColor(hue: CGFloat($0 / 360), saturation: 0.85, brightness: 1, alpha: 1) }
+}
+
+/// Цветовой куб для HSL и тонирования теней/светов. Считается один раз на набор параметров.
+enum ColorCube {
+    private static let cache = NSCache<NSString, NSData>()
+    static let dimension = 24
+
+    static func data(for a: Adjustments) -> Data {
+        let key = "\(a.shadowTone)|\(a.shadowToneAmount)|\(a.highTone)|\(a.highToneAmount)|\(a.hsl)" as NSString
+        if let cached = cache.object(forKey: key) { return cached as Data }
+
+        let n = dimension
+        var out = [Float](repeating: 0, count: n * n * n * 4)
+        var idx = 0
+
+        func hsvToRgb(_ h: Double, _ s: Double, _ v: Double) -> (Double, Double, Double) {
+            let hh = (h - floor(h)) * 6
+            let i = floor(hh), f = hh - i
+            let p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f))
+            switch Int(i) % 6 {
+            case 0: return (v, t, p)
+            case 1: return (q, v, p)
+            case 2: return (p, v, t)
+            case 3: return (p, q, v)
+            case 4: return (t, p, v)
+            default: return (v, p, q)
+            }
+        }
+
+        let shadowRGB = hsvToRgb(a.shadowTone, 1, 1)
+        let highRGB = hsvToRgb(a.highTone, 1, 1)
+        let hslActive = a.hsl.contains { $0 != 0 }
+
+        for bi in 0..<n {
+            for gi in 0..<n {
+                for ri in 0..<n {
+                    var r = Double(ri) / Double(n - 1)
+                    var g = Double(gi) / Double(n - 1)
+                    var b = Double(bi) / Double(n - 1)
+
+                    if hslActive {
+                        let mx = max(r, g, b), mn = min(r, g, b), d = mx - mn
+                        var h = 0.0
+                        if d > 0.0001 {
+                            if mx == r { h = ((g - b) / d).truncatingRemainder(dividingBy: 6) }
+                            else if mx == g { h = (b - r) / d + 2 }
+                            else { h = (r - g) / d + 4 }
+                            h /= 6
+                            if h < 0 { h += 1 }
+                        }
+                        var s = mx > 0.0001 ? d / mx : 0
+                        var v = mx
+                        let hueDeg = h * 360
+                        var dh = 0.0, ds = 0.0, dv = 0.0
+                        for k in 0..<8 {
+                            var dist = abs(hueDeg - HSLChannel.degrees[k])
+                            if dist > 180 { dist = 360 - dist }
+                            let w = max(0, 1 - dist / 45) * min(1, s * 3)
+                            if w > 0 {
+                                dh += w * a.hsl[k * 3] * 40 / 360
+                                ds += w * a.hsl[k * 3 + 1]
+                                dv += w * a.hsl[k * 3 + 2]
+                            }
+                        }
+                        h += dh
+                        s = max(0, min(1, s * (1 + ds)))
+                        v = max(0, min(1, v * (1 + dv * 0.6)))
+                        (r, g, b) = hsvToRgb(h, s, v)
+                    }
+
+                    if a.shadowToneAmount != 0 || a.highToneAmount != 0 {
+                        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                        let sw = pow(1 - lum, 2) * a.shadowToneAmount * 0.5
+                        let hw = pow(lum, 2) * a.highToneAmount * 0.5
+                        r += (shadowRGB.0 - 0.5) * sw + (highRGB.0 - 0.5) * hw
+                        g += (shadowRGB.1 - 0.5) * sw + (highRGB.1 - 0.5) * hw
+                        b += (shadowRGB.2 - 0.5) * sw + (highRGB.2 - 0.5) * hw
+                    }
+
+                    out[idx] = Float(max(0, min(1, r)))
+                    out[idx + 1] = Float(max(0, min(1, g)))
+                    out[idx + 2] = Float(max(0, min(1, b)))
+                    out[idx + 3] = 1
+                    idx += 4
+                }
+            }
+        }
+        let d = out.withUnsafeBufferPointer { Data(buffer: $0) }
+        cache.setObject(d as NSData, forKey: key)
+        return d
+    }
+}
+
+extension Adjustments {
+
+    /// Применяет настройки. time нужен только для «живого» зерна.
+    func apply(to input: CIImage, time: Double = 0) -> CIImage {
+        guard !isIdentity else { return input }
+        let extent = input.extent
+        var img = input
+
+        func f(_ name: String, _ params: [String: Any]) {
+            guard let flt = CIFilter(name: name) else { return }
+            flt.setValue(img, forKey: kCIInputImageKey)
+            for (k, v) in params where flt.inputKeys.contains(k) { flt.setValue(v, forKey: k) }
+            if let o = flt.outputImage { img = o.cropped(to: extent) }
+        }
+        func vec(_ x: Double, _ y: Double) -> CIVector { CIVector(x: CGFloat(x), y: CGFloat(y)) }
+
+        // Баланс белого
+        if warmth != 0 || tint != 0 {
+            f("CITemperatureAndTint", [
+                "inputNeutral": CIVector(x: 6500 + CGFloat(warmth) * 2200, y: CGFloat(tint) * 80),
+                "inputTargetNeutral": CIVector(x: 6500, y: 0)
+            ])
+        }
+
+        // Света / тени
+        if highlights < 0 || shadows != 0 {
+            f("CIHighlightShadowAdjust", ["inputHighlightAmount": 1 + min(0, highlights), "inputShadowAmount": shadows])
+        }
+
+        // Кривая (3 точки)
+        let ch = curveHigh + max(0, highlights) * 0.8
+        if curveShadows != 0 || curveMid != 0 || ch != 0 {
+            func c(_ v: Double) -> Double { max(0, min(1, v)) }
+            f("CIToneCurve", [
+                "inputPoint0": vec(0, 0),
+                "inputPoint1": vec(0.25, c(0.25 + curveShadows * 0.15)),
+                "inputPoint2": vec(0.5, c(0.5 + curveMid * 0.2)),
+                "inputPoint3": vec(0.75, c(0.75 + ch * 0.15)),
+                "inputPoint4": vec(1, 1)
+            ])
+        }
+
+        // Яркость / контраст / насыщенность
+        if brightness != 0 || contrast != 0 || saturation != 0 {
+            f("CIColorControls", [
+                kCIInputBrightnessKey: brightness * 0.4,
+                kCIInputContrastKey: 1 + contrast * 0.6,
+                kCIInputSaturationKey: max(0, 1 + saturation)
+            ])
+        }
+        if vibrance != 0 { f("CIVibrance", ["inputAmount": vibrance]) }
+        if hue != 0 { f("CIHueAdjustment", [kCIInputAngleKey: hue * Double.pi]) }
+
+        // HSL + тонирование
+        if needsCube {
+            f("CIColorCube", ["inputCubeDimension": ColorCube.dimension, "inputCubeData": ColorCube.data(for: self)])
+        }
+
+        // Матовость
+        if fade > 0 {
+            let k = CGFloat(1 - fade * 0.25), bias = CGFloat(fade * 0.1)
+            f("CIColorMatrix", [
+                "inputRVector": CIVector(x: k, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: k, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: k, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                "inputBiasVector": CIVector(x: bias, y: bias, z: bias, w: 0)
+            ])
+        }
+
+        // Ретушь (мягкая кожа): смесь с размытием
+        if retouch > 0 {
+            let sigma = Double(extent.height) * 0.003 * (1 + retouch * 2)
+            let soft = img.clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: extent)
+            let a = CGFloat(min(0.85, retouch * 0.8))
+            img = soft.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 1, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: a),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+            ]).composited(over: img).cropped(to: extent)
+        }
+
+        if blur > 0 {
+            img = img.clampedToExtent().applyingGaussianBlur(sigma: Double(extent.height) * 0.02 * blur).cropped(to: extent)
+        }
+        if glow > 0 {
+            f("CIBloom", [kCIInputRadiusKey: Double(extent.height) * 0.02, kCIInputIntensityKey: glow])
+        }
+        if sharpen > 0 { f("CISharpenLuminance", ["inputSharpness": sharpen * 1.5]) }
+        if vignette > 0 { f("CIVignette", [kCIInputIntensityKey: vignette * 1.6, kCIInputRadiusKey: 1.6]) }
+
+        // Зерно (живое — меняется каждый кадр)
+        if grain > 0, let rg = CIFilter(name: "CIRandomGenerator")?.outputImage {
+            let frame = floor(time * 24)
+            let jitter = CGAffineTransform(translationX: CGFloat(frame.truncatingRemainder(dividingBy: 97)) * 37,
+                                           y: CGFloat(frame.truncatingRemainder(dividingBy: 89)) * 53)
+            let k = CGFloat(grain * 0.9)
+            let noise = rg.transformed(by: jitter)
+                .transformed(by: CGAffineTransform(scaleX: 1.4, y: 1.4))
+                .applyingFilter("CIColorMatrix", parameters: [
+                    "inputRVector": CIVector(x: k, y: 0, z: 0, w: 0),
+                    "inputGVector": CIVector(x: k, y: 0, z: 0, w: 0),
+                    "inputBVector": CIVector(x: k, y: 0, z: 0, w: 0),
+                    "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                    "inputBiasVector": CIVector(x: 0.5 - 0.5 * k, y: 0.5 - 0.5 * k, z: 0.5 - 0.5 * k, w: 1)
+                ]).cropped(to: extent)
+            img = noise.applyingFilter("CISoftLightBlendMode", parameters: [kCIInputBackgroundImageKey: img]).cropped(to: extent)
+        }
+        return img
+    }
+}
+
+// =====================================================================
+// MARK: - Filter presets (мягкие, «дорогие»)
+// =====================================================================
+
+enum FilterCategory: Int, CaseIterable {
+    case all, soft, cinema, portrait, retro, bw, vivid
+
+    var title: String {
+        switch self {
+        case .all: return "Все"
+        case .soft: return "Нежные"
+        case .cinema: return "Кино"
+        case .portrait: return "Портрет"
+        case .retro: return "Ретро"
+        case .bw: return "Ч/Б"
+        case .vivid: return "Яркие"
+        }
+    }
+}
+
+struct FilterPreset {
+    let name: String
+    let category: FilterCategory
+    let adjust: Adjustments
+}
+
+enum FilterCatalog {
+    /// id фильтра = номер в списке (с 1). 0 = без фильтра.
+    static let all: [FilterPreset] = {
+        var list: [FilterPreset] = []
+        func p(_ name: String, _ cat: FilterCategory, _ f: (inout Adjustments) -> Void) {
+            var a = Adjustments()
+            f(&a)
+            list.append(FilterPreset(name: name, category: cat, adjust: a))
+        }
+
+        // Нежные
+        p("Нежность", .soft) { $0.contrast = -0.06; $0.saturation = -0.08; $0.fade = 0.22; $0.warmth = 0.08; $0.glow = 0.25; $0.highlights = -0.15 }
+        p("Сливки", .soft) { $0.brightness = 0.04; $0.contrast = -0.08; $0.saturation = -0.12; $0.warmth = 0.25; $0.fade = 0.2; $0.shadows = 0.15; $0.glow = 0.15 }
+        p("Пастель", .soft) { $0.brightness = 0.08; $0.contrast = -0.12; $0.saturation = -0.18; $0.fade = 0.3; $0.vibrance = 0.1 }
+        p("Дымка", .soft) { $0.brightness = 0.06; $0.contrast = -0.18; $0.fade = 0.38; $0.glow = 0.35; $0.saturation = -0.1 }
+        p("Персик", .soft) { $0.warmth = 0.22; $0.tint = 0.12; $0.brightness = 0.05; $0.fade = 0.18; $0.glow = 0.2; $0.retouch = 0.2 }
+        p("Облако", .soft) { $0.brightness = 0.1; $0.contrast = -0.1; $0.saturation = -0.25; $0.warmth = -0.05; $0.fade = 0.25; $0.glow = 0.2 }
+        p("Молоко", .soft) { $0.brightness = 0.12; $0.contrast = -0.15; $0.saturation = -0.3; $0.fade = 0.3 }
+
+        // Кино
+        p("Кино", .cinema) { $0.contrast = 0.15; $0.saturation = -0.08; $0.fade = 0.12; $0.shadowTone = 0.52; $0.shadowToneAmount = 0.28; $0.highTone = 0.08; $0.highToneAmount = 0.22; $0.vignette = 0.25; $0.grain = 0.12 }
+        p("Тил и оранж", .cinema) { $0.contrast = 0.18; $0.saturation = 0.05; $0.shadowTone = 0.5; $0.shadowToneAmount = 0.4; $0.highTone = 0.07; $0.highToneAmount = 0.35; $0.vignette = 0.15 }
+        p("Ночной город", .cinema) { $0.brightness = -0.05; $0.contrast = 0.2; $0.saturation = 0.1; $0.shadowTone = 0.62; $0.shadowToneAmount = 0.4; $0.highTone = 0.88; $0.highToneAmount = 0.25; $0.glow = 0.3; $0.vignette = 0.3 }
+        p("Драма", .cinema) { $0.contrast = 0.3; $0.saturation = -0.2; $0.shadows = -0.2; $0.vignette = 0.4; $0.fade = 0.08; $0.grain = 0.15 }
+        p("Блокбастер", .cinema) { $0.contrast = 0.22; $0.saturation = 0.1; $0.warmth = -0.05; $0.shadowTone = 0.55; $0.shadowToneAmount = 0.3; $0.highTone = 0.08; $0.highToneAmount = 0.2; $0.sharpen = 0.3 }
+        p("Мрак", .cinema) { $0.brightness = -0.1; $0.contrast = 0.25; $0.saturation = -0.3; $0.vignette = 0.5; $0.shadowTone = 0.6; $0.shadowToneAmount = 0.25 }
+
+        // Портрет
+        p("Глянец", .portrait) { $0.retouch = 0.55; $0.glow = 0.3; $0.brightness = 0.05; $0.warmth = 0.1; $0.saturation = 0.05; $0.contrast = 0.05 }
+        p("Кожа", .portrait) { $0.retouch = 0.6; $0.warmth = 0.12; $0.tint = 0.05; $0.vibrance = 0.15; $0.brightness = 0.04; $0.highlights = -0.1 }
+        p("Свежесть", .portrait) { $0.vibrance = 0.3; $0.brightness = 0.06; $0.warmth = -0.04; $0.retouch = 0.3; $0.glow = 0.15 }
+        p("Румянец", .portrait) { $0.warmth = 0.15; $0.tint = 0.15; $0.saturation = 0.05; $0.retouch = 0.4; $0.glow = 0.2 }
+        p("Гламур", .portrait) { $0.retouch = 0.5; $0.glow = 0.45; $0.brightness = 0.07; $0.contrast = 0.08; $0.vibrance = 0.2 }
+        p("Студия", .portrait) { $0.contrast = 0.12; $0.sharpen = 0.3; $0.retouch = 0.25; $0.brightness = 0.03; $0.warmth = 0.05 }
+
+        // Ретро
+        p("Плёнка 90-х", .retro) { $0.warmth = 0.2; $0.fade = 0.32; $0.grain = 0.35; $0.saturation = -0.12; $0.contrast = 0.1; $0.vignette = 0.22; $0.highlights = -0.15 }
+        p("Полароид", .retro) { $0.warmth = 0.15; $0.tint = 0.06; $0.fade = 0.28; $0.contrast = -0.05; $0.saturation = -0.05; $0.vignette = 0.3; $0.grain = 0.15 }
+        p("Винтаж", .retro) { $0.warmth = 0.3; $0.saturation = -0.25; $0.fade = 0.35; $0.contrast = 0.05; $0.grain = 0.25; $0.vignette = 0.3 }
+        p("VHS", .retro) { $0.saturation = 0.1; $0.warmth = 0.05; $0.fade = 0.15; $0.grain = 0.4; $0.blur = 0.08; $0.contrast = 0.1 }
+        p("70-е", .retro) { $0.warmth = 0.35; $0.tint = 0.1; $0.saturation = 0.15; $0.fade = 0.2; $0.contrast = 0.1; $0.grain = 0.2 }
+        p("Кодак", .retro) { $0.warmth = 0.15; $0.saturation = 0.12; $0.contrast = 0.12; $0.fade = 0.1; $0.grain = 0.2; $0.highlights = -0.1 }
+        p("Выцветшее фото", .retro) { $0.saturation = -0.3; $0.fade = 0.45; $0.warmth = 0.15; $0.contrast = -0.1; $0.vignette = 0.2 }
+
+        // Ч/Б
+        p("Ч/Б мягкий", .bw) { $0.saturation = -1; $0.fade = 0.2; $0.contrast = -0.05; $0.grain = 0.1 }
+        p("Ч/Б контраст", .bw) { $0.saturation = -1; $0.contrast = 0.4; $0.vignette = 0.25 }
+        p("Ч/Б плёнка", .bw) { $0.saturation = -1; $0.contrast = 0.15; $0.fade = 0.15; $0.grain = 0.45; $0.vignette = 0.25 }
+        p("Серебро", .bw) { $0.saturation = -1; $0.brightness = 0.05; $0.contrast = 0.1; $0.glow = 0.2 }
+        p("Графит", .bw) { $0.saturation = -1; $0.contrast = 0.3; $0.brightness = -0.1; $0.vignette = 0.4 }
+
+        // Яркие
+        p("Яркий день", .vivid) { $0.vibrance = 0.3; $0.saturation = 0.15; $0.contrast = 0.1; $0.brightness = 0.03 }
+        p("Сочный", .vivid) { $0.saturation = 0.35; $0.contrast = 0.12; $0.vibrance = 0.2 }
+        p("Лето", .vivid) { $0.warmth = 0.2; $0.saturation = 0.2; $0.brightness = 0.05; $0.contrast = 0.08; $0.glow = 0.12 }
+        p("Осень", .vivid) { $0.warmth = 0.35; $0.saturation = 0.1; $0.highTone = 0.08; $0.highToneAmount = 0.2; $0.contrast = 0.1; $0.vignette = 0.15 }
+        p("Лес", .vivid) {
+            $0.contrast = 0.1; $0.vignette = 0.2
+            $0.hsl[9 + 1] = 0.4; $0.hsl[6 + 1] = 0.2
+        }
+        p("Море", .vivid) {
+            $0.warmth = -0.15; $0.saturation = 0.15; $0.contrast = 0.1
+            $0.hsl[12 + 1] = 0.4; $0.hsl[15 + 1] = 0.3
+        }
+        p("Закат", .vivid) { $0.warmth = 0.45; $0.tint = 0.12; $0.saturation = 0.15; $0.contrast = 0.1; $0.highTone = 0.05; $0.highToneAmount = 0.3; $0.vignette = 0.25; $0.glow = 0.2 }
+        p("Неон", .vivid) { $0.saturation = 0.3; $0.contrast = 0.2; $0.shadowTone = 0.75; $0.shadowToneAmount = 0.4; $0.highTone = 0.9; $0.highToneAmount = 0.3; $0.glow = 0.35; $0.vignette = 0.2 }
+        p("Лёд", .vivid) { $0.warmth = -0.35; $0.saturation = -0.05; $0.brightness = 0.05; $0.contrast = 0.1; $0.glow = 0.15 }
+        return list
+    }()
+
+    static func preset(_ id: Int) -> FilterPreset? {
+        guard id > 0, id <= all.count else { return nil }
+        return all[id - 1]
+    }
+
+    static func ids(for category: FilterCategory) -> [Int] {
+        all.enumerated().filter { category == .all || $0.element.category == category }.map { $0.offset + 1 }
+    }
+}
+
+// =====================================================================
+// MARK: - Video looks (живые эффекты на клип)
+// =====================================================================
+
+enum VideoLook: Int, CaseIterable {
+    case none, glitch, shake, vhs, grain, flicker, pulse, pixel, glow, softFocus, mirror, rainbow
+
+    var title: String {
+        switch self {
+        case .none: return "Нет"
+        case .glitch: return "Глитч RGB"
+        case .shake: return "Тряска"
+        case .vhs: return "VHS"
+        case .grain: return "Плёнка"
+        case .flicker: return "Мерцание"
+        case .pulse: return "Пульс"
+        case .pixel: return "Пиксели"
+        case .glow: return "Свечение"
+        case .softFocus: return "Мягкий фокус"
+        case .mirror: return "Зеркало"
+        case .rainbow: return "Радуга"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .none: return "xmark"
+        case .glitch: return "waveform"
+        case .shake: return "iphone.radiowaves.left.and.right"
+        case .vhs: return "tv"
+        case .grain: return "film"
+        case .flicker: return "bolt.fill"
+        case .pulse: return "heart.fill"
+        case .pixel: return "square.grid.3x3.fill"
+        case .glow: return "sun.max.fill"
+        case .softFocus: return "circle.dotted"
+        case .mirror: return "rectangle.split.2x1"
+        case .rainbow: return "paintpalette"
+        }
+    }
+
+    func apply(to input: CIImage, time: Double) -> CIImage {
+        let e = input.extent
+        let W = e.width, H = e.height
+        func channelShift(_ img: CIImage, _ d: CGFloat) -> CIImage {
+            func ch(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CIImage {
+                img.applyingFilter("CIColorMatrix", parameters: [
+                    "inputRVector": CIVector(x: r, y: 0, z: 0, w: 0),
+                    "inputGVector": CIVector(x: 0, y: g, z: 0, w: 0),
+                    "inputBVector": CIVector(x: 0, y: 0, z: b, w: 0),
+                    "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                    "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+                ])
+            }
+            let red = ch(1, 0, 0).transformed(by: CGAffineTransform(translationX: d, y: 0))
+            let green = ch(0, 1, 0)
+            let blue = ch(0, 0, 1).transformed(by: CGAffineTransform(translationX: -d, y: 0))
+            let rg = green.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: red])
+            return blue.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: rg]).cropped(to: e)
+        }
+        func scaled(_ img: CIImage, _ s: CGFloat) -> CIImage {
+            let t = CGAffineTransform(translationX: -e.midX, y: -e.midY)
+                .concatenating(CGAffineTransform(scaleX: s, y: s))
+                .concatenating(CGAffineTransform(translationX: e.midX, y: e.midY))
+            return img.transformed(by: t).cropped(to: e)
+        }
+
+        switch self {
+        case .none:
+            return input
+        case .glitch:
+            let burst = CGFloat(pow(max(0, sin(time * 9)), 6))
+            return channelShift(input, W * 0.025 * burst + W * 0.002)
+        case .shake:
+            let s = scaled(input, 1.06)
+            return s.transformed(by: CGAffineTransform(translationX: CGFloat(sin(time * 31)) * W * 0.012,
+                                                       y: CGFloat(cos(time * 27)) * H * 0.008)).cropped(to: e)
+        case .vhs:
+            var img = channelShift(input, W * 0.006)
+            img = img.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.85, kCIInputContrastKey: 1.08])
+            if let stripes = CIFilter(name: "CIStripesGenerator") {
+                stripes.setValue(CIVector(x: e.midX, y: e.midY), forKey: "inputCenter")
+                stripes.setValue(CIColor(red: 0, green: 0, blue: 0, alpha: 0.18), forKey: "inputColor0")
+                stripes.setValue(CIColor(red: 0, green: 0, blue: 0, alpha: 0), forKey: "inputColor1")
+                stripes.setValue(max(1, H / 360), forKey: "inputWidth")
+                stripes.setValue(0.7, forKey: "inputSharpness")
+                if let s = stripes.outputImage?.transformed(by: CGAffineTransform(rotationAngle: .pi / 2)).cropped(to: e) {
+                    img = s.composited(over: img)
+                }
+            }
+            return Adjustments(grain: 0.35).apply(to: img, time: time)
+        case .grain:
+            var a = Adjustments()
+            a.grain = 0.6; a.fade = 0.15; a.vignette = 0.2
+            return a.apply(to: input, time: time)
+        case .flicker:
+            let b = 0.07 * sin(time * 53) + 0.04 * sin(time * 17)
+            return input.applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: b])
+        case .pulse:
+            return scaled(input, 1 + 0.045 * CGFloat(max(0, sin(time * 8))))
+        case .pixel:
+            return input.clampedToExtent()
+                .applyingFilter("CIPixellate", parameters: [kCIInputScaleKey: max(4, W * 0.012), kCIInputCenterKey: CIVector(x: 0, y: 0)])
+                .cropped(to: e)
+        case .glow:
+            return input.applyingFilter("CIBloom", parameters: [kCIInputRadiusKey: Double(H) * 0.025, kCIInputIntensityKey: 1.0]).cropped(to: e)
+        case .softFocus:
+            let blurred = input.clampedToExtent().applyingGaussianBlur(sigma: Double(H) * 0.008).cropped(to: e)
+            return blurred.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 1, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.6),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+            ]).composited(over: input).cropped(to: e)
+        case .mirror:
+            let left = input.cropped(to: CGRect(x: e.minX, y: e.minY, width: W / 2, height: H))
+            let flipped = left.transformed(by: CGAffineTransform(scaleX: -1, y: 1).concatenating(CGAffineTransform(translationX: e.minX + W, y: 0)))
+            return flipped.composited(over: left.composited(over: input)).cropped(to: e)
+        case .rainbow:
+            return input.applyingFilter("CIHueAdjustment", parameters: [kCIInputAngleKey: time * 2.2])
+        }
+    }
+}
+
+// =====================================================================
+// MARK: - Transition catalog (~110 отобранных переходов)
 // =====================================================================
 //
 // Переход = БАЗА (сдвиг, шторка, ирис, жалюзи, шум, 3D…) + ЭФФЕКТ (размытие, RGB, вспышка…)
@@ -276,22 +740,19 @@ struct TimelineLayout {
 // Комбинации и дают тысячи вариантов. ID перехода = номер в каталоге (0 = нет перехода).
 
 enum TransitionCategory: Int, CaseIterable {
-    case all, fade, push, cover, wipe, shape, blinds, noise, zoom, flip3d, distort, pixel, glitch, light
+    case favorites, all, fade, push, zoom, wipe, shape, flip3d, distort, glitch, light
 
     var title: String {
         switch self {
+        case .favorites: return "♥ Избранное"
         case .all: return "Все"
-        case .fade: return "Затемнение"
+        case .fade: return "Фейд"
         case .push: return "Сдвиг"
-        case .cover: return "Наезд"
+        case .zoom: return "Зум"
         case .wipe: return "Шторки"
         case .shape: return "Фигуры"
-        case .blinds: return "Жалюзи"
-        case .noise: return "Шум"
-        case .zoom: return "Зум и вращение"
         case .flip3d: return "3D"
         case .distort: return "Искажения"
-        case .pixel: return "Пиксели"
         case .glitch: return "Глитч"
         case .light: return "Свет"
         }
@@ -299,18 +760,15 @@ enum TransitionCategory: Int, CaseIterable {
 
     var symbol: String {
         switch self {
+        case .favorites: return "heart.fill"
         case .all: return "square.grid.2x2"
         case .fade: return "drop.halffull"
         case .push: return "arrow.left.and.right"
-        case .cover: return "chevron.left.2"
+        case .zoom: return "arrow.triangle.2.circlepath"
         case .wipe: return "forward.end.fill"
         case .shape: return "circle.dashed"
-        case .blinds: return "list.bullet"
-        case .noise: return "sparkles"
-        case .zoom: return "arrow.triangle.2.circlepath"
         case .flip3d: return "cube"
         case .distort: return "tornado"
-        case .pixel: return "square.grid.3x3.fill"
         case .glitch: return "bolt.horizontal.fill"
         case .light: return "sun.max.fill"
         }
@@ -429,13 +887,30 @@ struct TransitionSpec {
     let ease: Ease
 }
 
+/// Избранные переходы (хранятся на устройстве).
+enum TransitionFavorites {
+    private static let key = "favoriteTransitions"
+    static var ids: [Int] {
+        get { UserDefaults.standard.array(forKey: key) as? [Int] ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+    static func contains(_ id: Int) -> Bool { ids.contains(id) }
+    @discardableResult
+    static func toggle(_ id: Int) -> Bool {
+        var list = ids
+        if let i = list.firstIndex(of: id) { list.remove(at: i); ids = list; return false }
+        list.append(id); ids = list
+        return true
+    }
+}
+
 enum TransitionCatalog {
 
     static let all: [TransitionSpec] = build()
 
     private static let byCategory: [TransitionCategory: [TransitionSpec]] = {
         var d: [TransitionCategory: [TransitionSpec]] = [.all: all]
-        for c in TransitionCategory.allCases where c != .all { d[c] = all.filter { $0.category == c } }
+        for c in TransitionCategory.allCases where c != .all && c != .favorites { d[c] = all.filter { $0.category == c } }
         return d
     }()
 
@@ -445,149 +920,127 @@ enum TransitionCatalog {
     }
 
     static func list(_ category: TransitionCategory) -> [TransitionSpec] {
-        byCategory[category] ?? all
+        if category == .favorites { return TransitionFavorites.ids.compactMap { spec($0) } }
+        return byCategory[category] ?? all
     }
 
+    /// ~110 отобранных переходов. ВАЖНО: порядок не менять — id (и избранное) привязаны к номеру.
     private static func build() -> [TransitionSpec] {
-        typealias Entry = (String, Base, TransitionCategory, Ease)
-        var bases: [Entry] = []
-
-        // Затемнение / растворение
-        bases.append(("Растворение", .dissolve, .fade, .smooth))
-        let dips: [(String, CIColor)] = [
-            ("чёрный", CIColor(red: 0, green: 0, blue: 0)), ("белый", CIColor(red: 1, green: 1, blue: 1)),
-            ("красный", CIColor(red: 0.95, green: 0.15, blue: 0.2)), ("оранжевый", CIColor(red: 1, green: 0.55, blue: 0.1)),
-            ("жёлтый", CIColor(red: 1, green: 0.9, blue: 0.2)), ("зелёный", CIColor(red: 0.2, green: 0.85, blue: 0.35)),
-            ("бирюзовый", CIColor(red: 0.1, green: 0.85, blue: 0.85)), ("синий", CIColor(red: 0.15, green: 0.35, blue: 0.95)),
-            ("фиолетовый", CIColor(red: 0.55, green: 0.25, blue: 0.9)), ("розовый", CIColor(red: 1, green: 0.4, blue: 0.7)),
-            ("золотой", CIColor(red: 1, green: 0.78, blue: 0.3)), ("серый", CIColor(red: 0.5, green: 0.5, blue: 0.5)),
-            ("персик", CIColor(red: 1, green: 0.7, blue: 0.6)), ("мятный", CIColor(red: 0.6, green: 1, blue: 0.8))
-        ]
-        for (n, c) in dips { bases.append(("Через \(n)", .dip(c), .fade, .smooth)) }
-
-        // Сдвиг / наезд / уход × 8 направлений × 4 кривые
-        for d in Dir.allCases {
-            for e in Ease.allCases {
-                bases.append(("Сдвиг \(d.arrow) \(e.title)", .push(d), .push, e))
-                bases.append(("Наезд \(d.arrow) \(e.title)", .cover(d), .cover, e))
-                bases.append(("Уход \(d.arrow) \(e.title)", .reveal(d), .cover, e))
-            }
+        var list: [TransitionSpec] = []
+        func add(_ name: String, _ base: Base, _ cat: TransitionCategory, fx: Fx = .none, ease: Ease = .smooth) {
+            list.append(TransitionSpec(id: list.count + 1, name: name, category: cat, base: base, fx: fx, ease: ease))
         }
+        let gold = CIColor(red: 1, green: 0.78, blue: 0.3)
 
-        // Линейные шторки: 16 углов × 3 мягкости
-        let softs: [(String, CGFloat)] = [("чёткая", 0.03), ("мягкая", 0.3), ("туман", 0.9)]
-        for i in 0..<16 {
-            let deg = Double(i) * 22.5
-            let label = deg.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(deg))°" : String(format: "%.1f°", deg)
-            for (sn, s) in softs {
-                bases.append(("Шторка \(label) \(sn)", .wipe(angle: CGFloat(deg) * .pi / 180, soft: s), .wipe, .smooth))
-            }
-        }
+        // Фейд
+        add("Плавный фейд", .dissolve, .fade)
+        add("Через чёрный", .dip(CIColor(red: 0, green: 0, blue: 0)), .fade)
+        add("Через белый", .dip(CIColor(red: 1, green: 1, blue: 1)), .fade)
+        add("Золотой фейд", .dip(gold), .fade)
+        add("Розовый фейд", .dip(CIColor(red: 1, green: 0.4, blue: 0.7)), .fade)
+        add("Синий фейд", .dip(CIColor(red: 0.15, green: 0.35, blue: 0.95)), .fade)
+        add("Дымка", .dissolve, .fade, fx: .blur)
+        add("Мягкий пульс", .dissolve, .fade, fx: .zoomPulse)
+        add("Лёгкий наклон", .dissolve, .fade, fx: .tilt)
+        add("Сочный фейд", .dissolve, .fade, fx: .saturate)
+        add("Радужный фейд", .dissolve, .fade, fx: .hue)
 
-        // Ирисы / фигуры
-        let shapes: [(String, CGFloat)] = [("круг", 1.0), ("овал", 1.8), ("столб", 0.55)]
-        let centers: [(String, CGFloat, CGFloat)] = [("центр", 0.5, 0.5), ("↖", 0, 1), ("↗", 1, 1), ("↙", 0, 0), ("↘", 1, 0)]
-        for inward in [false, true] {
-            for (sn, sx) in shapes {
-                for soft in [(" чётко", CGFloat(0.03)), (" мягко", CGFloat(0.4))] {
-                    for (cn, cx, cy) in centers {
-                        bases.append(("\(inward ? "Сужение" : "Расширение") \(sn) \(cn)\(soft.0)",
-                                      .iris(inward: inward, scaleX: sx, soft: soft.1, cx: cx, cy: cy), .shape, .smooth))
-                    }
-                }
-            }
-        }
+        // Сдвиг и наезд
+        let four: [(Dir, String)] = [(.left, "←"), (.right, "→"), (.up, "↑"), (.down, "↓")]
+        for (d, a) in four { add("Сдвиг \(a)", .push(d), .push) }
+        for (d, a) in four { add("Рывок \(a)", .push(d), .push, fx: .blur, ease: .snap) }
+        for (d, a) in four { add("Пружина \(a)", .push(d), .push, ease: .back) }
+        for (d, a) in [(Dir.upLeft, "↖"), (.upRight, "↗"), (.downLeft, "↙"), (.downRight, "↘")] { add("Диагональ \(a)", .push(d), .push) }
+        for (d, a) in four { add("Наезд \(a)", .cover(d), .push) }
+        add("Уход ←", .reveal(.left), .push)
+        add("Уход →", .reveal(.right), .push)
 
-        // Жалюзи
-        let bAngles: [(String, CGFloat)] = [("верт.", 0), ("гор.", .pi / 2), ("↗", .pi / 4), ("↖", 3 * .pi / 4)]
-        for count in [4, 8, 16, 32] {
-            for (an, a) in bAngles {
-                for (sn, s) in [("чётко", CGFloat(0.05)), ("мягко", CGFloat(0.5))] {
-                    bases.append(("Жалюзи \(count) \(an) \(sn)", .blinds(count: count, angle: a, soft: s), .blinds, .smooth))
-                }
-            }
-        }
+        // Зум и вращение
+        add("Приближение", .zoom(inward: true, strength: 0.5), .zoom)
+        add("Рывок вперёд", .zoom(inward: true, strength: 0.6), .zoom, fx: .zoomBlur)
+        add("Приближение + блюр", .zoom(inward: true, strength: 0.5), .zoom, fx: .blur)
+        add("Отдаление", .zoom(inward: false, strength: 0.5), .zoom)
+        add("Отдаление + блюр", .zoom(inward: false, strength: 0.5), .zoom, fx: .blur)
+        add("Вращение ↻ 90°", .spin(cw: true, angle: .pi / 2), .zoom)
+        add("Вращение ↺ 90°", .spin(cw: false, angle: .pi / 2), .zoom)
+        add("Вращение ↻ 180°", .spin(cw: true, angle: .pi), .zoom, fx: .blur)
+        add("Вращение ↺ 360°", .spin(cw: false, angle: 2 * .pi), .zoom, fx: .zoomBlur)
+        add("Зум-наклон", .zoom(inward: true, strength: 0.9), .zoom, fx: .tilt)
 
-        // Сетки
-        let sweeps = ["разом", "волна →", "из центра"]
-        for cells in [4, 8, 16] {
-            for diag in [false, true] {
-                for sw in 0..<3 {
-                    bases.append(("Сетка \(cells) \(diag ? "ромбы" : "квадраты") \(sweeps[sw])",
-                                  .grid(cells: cells, diagonal: diag, sweep: sw), .blinds, .smooth))
-                }
-            }
+        // Шторки, двери, жалюзи
+        for (deg, a) in [(0, "→"), (180, "←"), (90, "↑"), (270, "↓"), (45, "↗"), (135, "↖"), (225, "↙"), (315, "↘")] {
+            add("Шторка \(a)", .wipe(angle: CGFloat(deg) * .pi / 180, soft: 0.3), .wipe)
         }
+        add("Туман →", .wipe(angle: 0, soft: 0.9), .wipe)
+        add("Двери ↔ откр.", .doors(vertical: true, open: true), .wipe)
+        add("Двери ↔ закр.", .doors(vertical: true, open: false), .wipe)
+        add("Двери ↕ откр.", .doors(vertical: false, open: true), .wipe)
+        add("Двери ↕ закр.", .doors(vertical: false, open: false), .wipe)
+        add("Жалюзи 8", .blinds(count: 8, angle: 0, soft: 0.1), .wipe)
+        add("Жалюзи 16 гор.", .blinds(count: 16, angle: .pi / 2, soft: 0.1), .wipe)
+        add("Жалюзи ↗ 8", .blinds(count: 8, angle: .pi / 4, soft: 0.3), .wipe)
+        add("Полосы 8", .slices(count: 8, vertical: true), .wipe)
+        add("Полосы 16 гор.", .slices(count: 16, vertical: false), .wipe)
+        add("Сетка 8", .grid(cells: 8, diagonal: false, sweep: 1), .wipe)
+        add("Ромбы из центра", .grid(cells: 8, diagonal: true, sweep: 2), .wipe)
+        add("Сетка 16", .grid(cells: 16, diagonal: false, sweep: 0), .wipe)
 
-        // Шум
-        for (gn, g) in [("пыль", CGFloat(1)), ("зерно", 4), ("крупно", 10), ("блоки", 24)] {
-            for (sn, s) in [("чётко", CGFloat(0.03)), ("мягко", CGFloat(0.5))] {
-                bases.append(("Шум \(gn) \(sn)", .noise(grain: g, cloud: false, soft: s), .noise, .smooth))
-            }
+        // Фигуры и шум
+        add("Круг из центра", .iris(inward: false, scaleX: 1, soft: 0.4, cx: 0.5, cy: 0.5), .shape)
+        add("Круг чётко", .iris(inward: false, scaleX: 1, soft: 0.03, cx: 0.5, cy: 0.5), .shape)
+        add("Круг внутрь", .iris(inward: true, scaleX: 1, soft: 0.4, cx: 0.5, cy: 0.5), .shape)
+        add("Овал", .iris(inward: false, scaleX: 1.8, soft: 0.4, cx: 0.5, cy: 0.5), .shape)
+        add("Столб внутрь", .iris(inward: true, scaleX: 0.55, soft: 0.4, cx: 0.5, cy: 0.5), .shape)
+        for (cx, cy, a) in [(CGFloat(0), CGFloat(1), "↖"), (1, 1, "↗"), (0, 0, "↙"), (1, 0, "↘")] {
+            add("Круг из угла \(a)", .iris(inward: false, scaleX: 1, soft: 0.4, cx: cx, cy: cy), .shape)
         }
-        for (cn, g) in [("S", CGFloat(30)), ("M", 70), ("L", 140)] {
-            bases.append(("Облака \(cn)", .noise(grain: g, cloud: true, soft: 0.35), .noise, .smooth))
-        }
-
-        // Полосы, двери
-        for count in [4, 8, 16] {
-            bases.append(("Полосы \(count) верт.", .slices(count: count, vertical: true), .blinds, .smooth))
-            bases.append(("Полосы \(count) гор.", .slices(count: count, vertical: false), .blinds, .smooth))
-        }
-        bases.append(("Двери верт. откр.", .doors(vertical: true, open: true), .wipe, .smooth))
-        bases.append(("Двери верт. закр.", .doors(vertical: true, open: false), .wipe, .smooth))
-        bases.append(("Двери гор. откр.", .doors(vertical: false, open: true), .wipe, .smooth))
-        bases.append(("Двери гор. закр.", .doors(vertical: false, open: false), .wipe, .smooth))
-
-        // Зум / вращение
-        for s in [CGFloat(0.25), 0.5, 0.9] { bases.append(("Приближение ×\(s)", .zoom(inward: true, strength: s), .zoom, .smooth)) }
-        for s in [CGFloat(0.25), 0.5, 0.7] { bases.append(("Отдаление ×\(s)", .zoom(inward: false, strength: s), .zoom, .smooth)) }
-        for cw in [true, false] {
-            for deg in [90, 180, 360] {
-                bases.append(("Вращение \(cw ? "↻" : "↺") \(deg)°", .spin(cw: cw, angle: CGFloat(deg) * .pi / 180), .zoom, .smooth))
-            }
-        }
+        add("Облака", .noise(grain: 70, cloud: true, soft: 0.35), .shape)
+        add("Облака L", .noise(grain: 140, cloud: true, soft: 0.35), .shape)
+        add("Зерно", .noise(grain: 4, cloud: false, soft: 0.5), .shape)
+        add("Блоки", .noise(grain: 24, cloud: false, soft: 0.03), .shape)
+        add("Пыль", .noise(grain: 1, cloud: false, soft: 0.5), .shape)
 
         // 3D
-        bases.append(("Переворот гор.", .flip(vertical: false), .flip3d, .smooth))
-        bases.append(("Переворот верт.", .flip(vertical: true), .flip3d, .smooth))
-        bases.append(("Куб ←", .cube(left: true), .flip3d, .smooth))
-        bases.append(("Куб →", .cube(left: false), .flip3d, .smooth))
+        add("Переворот ↔", .flip(vertical: false), .flip3d)
+        add("Переворот ↕", .flip(vertical: true), .flip3d)
+        add("Куб ←", .cube(left: true), .flip3d)
+        add("Куб →", .cube(left: false), .flip3d)
+        add("Куб + блюр", .cube(left: true), .flip3d, fx: .blur)
 
         // Искажения
-        for cw in [true, false] {
-            for (sn, s) in [("слабый", CGFloat(3)), ("сильный", 8)] {
-                bases.append(("Вихрь \(cw ? "↻" : "↺") \(sn)", .twirl(cw: cw, strength: s), .distort, .smooth))
-            }
-        }
-        bases.append(("Выпуклость", .bump(sign: 1), .distort, .smooth))
-        bases.append(("Вогнутость", .bump(sign: -1), .distort, .smooth))
-        bases.append(("Сжатие", .pinch(sign: 1), .distort, .smooth))
-        bases.append(("Растяжение", .pinch(sign: -1), .distort, .smooth))
+        add("Вихрь ↻", .twirl(cw: true, strength: 3), .distort)
+        add("Вихрь ↺ сильный", .twirl(cw: false, strength: 8), .distort)
+        add("Выпуклость", .bump(sign: 1), .distort)
+        add("Вогнутость", .bump(sign: -1), .distort)
+        add("Сжатие", .pinch(sign: 1), .distort)
+        add("Растяжение", .pinch(sign: -1), .distort)
+        add("Пиксели", .mosaic(.pixel, strength: 1.4), .distort)
+        add("Соты", .mosaic(.hex, strength: 1.4), .distort)
+        add("Кристаллы", .mosaic(.crystal, strength: 1.4), .distort)
+        add("Вихрь + рывок", .twirl(cw: true, strength: 3), .distort, fx: .zoomBlur)
 
-        // Мозаики
-        for (kn, k) in [("Пиксели", MosaicKind.pixel), ("Соты", .hex), ("Кристаллы", .crystal)] {
-            for (sn, s) in [("мелко", CGFloat(0.6)), ("крупно", 1.4)] {
-                bases.append(("\(kn) \(sn)", .mosaic(k, strength: s), .pixel, .smooth))
-            }
-        }
+        // Глитч
+        add("Глитч RGB", .dissolve, .glitch, fx: .rgb)
+        add("Тряска", .dissolve, .glitch, fx: .shake)
+        add("Сдвиг ← + RGB", .push(.left), .glitch, fx: .rgb)
+        add("Сдвиг → + тряска", .push(.right), .glitch, fx: .shake)
+        add("Пиксели + RGB", .mosaic(.pixel, strength: 1.4), .glitch, fx: .rgb)
+        add("Вихрь + RGB", .twirl(cw: true, strength: 3), .glitch, fx: .rgb)
+        add("Куб + RGB", .cube(left: false), .glitch, fx: .rgb)
+        add("Жалюзи + тряска", .blinds(count: 16, angle: 0, soft: 0.1), .glitch, fx: .shake)
+        add("Зум + RGB", .zoom(inward: true, strength: 0.5), .glitch, fx: .rgb)
 
-        // Комбинируем: сначала «чистые» (fx = none), потом все с эффектами
-        var result: [TransitionSpec] = []
-        result.reserveCapacity(bases.count * Fx.allCases.count)
-        for fx in Fx.allCases {
-            for (name, base, cat, ease) in bases {
-                var category = cat
-                switch fx {
-                case .rgb, .shake: category = .glitch
-                case .flash, .goldFlash: category = .light
-                default: break
-                }
-                result.append(TransitionSpec(id: result.count + 1, name: name + fx.suffix, category: category,
-                                             base: base, fx: fx, ease: ease))
-            }
-        }
-        return result
+        // Свет
+        add("Вспышка", .dissolve, .light, fx: .flash)
+        add("Золотая вспышка", .dissolve, .light, fx: .goldFlash)
+        add("Зум-вспышка", .zoom(inward: true, strength: 0.5), .light, fx: .flash)
+        add("Сдвиг + вспышка", .push(.left), .light, fx: .flash)
+        add("Круг + вспышка", .iris(inward: false, scaleX: 1, soft: 0.4, cx: 0.5, cy: 0.5), .light, fx: .flash)
+        add("Вихрь + золото", .twirl(cw: true, strength: 3), .light, fx: .goldFlash)
+        add("Шторка + золото", .wipe(angle: 0, soft: 0.5), .light, fx: .goldFlash)
+        add("Цветной вихрь", .twirl(cw: false, strength: 3), .light, fx: .hue)
+        add("Вращение + вспышка", .spin(cw: true, angle: .pi / 2), .light, fx: .flash)
+        return list
     }
 }
 
@@ -1587,15 +2040,35 @@ final class ThumbnailStore {
     }
 }
 
+
 // =====================================================================
-// MARK: - Custom compositor: фильтры по клипам + переходы + текст
+// MARK: - Custom compositor: цвет, эффекты, фон, переходы, текст
 // =====================================================================
 
 struct LayerInfo {
     let trackID: CMPersistentTrackID
     let orientation: CGImagePropertyOrientation
-    let filter: FilterType
+    let preset: Adjustments?
     let intensity: Float
+    let custom: Adjustments
+    let look: VideoLook
+    let flipH: Bool
+    let flipV: Bool
+    let rotation: Double
+    let zoom: Double
+    let bgMode: Int
+    let bgImage: CIImage?
+    let bgColor: CIColor?
+}
+
+struct ProjectInfo {
+    let fillMode: Int
+    let blurBackground: Bool
+    let introID: Int
+    let introDuration: Double
+    let outroID: Int
+    let outroDuration: Double
+    let total: Double
 }
 
 final class EditorInstruction: NSObject, AVVideoCompositionInstructionProtocol {
@@ -1609,13 +2082,15 @@ final class EditorInstruction: NSObject, AVVideoCompositionInstructionProtocol {
     let to: LayerInfo?
     let transitionID: Int
     let texts: [TextOverlay]
+    let project: ProjectInfo
 
-    init(timeRange: CMTimeRange, from: LayerInfo, to: LayerInfo?, transitionID: Int, texts: [TextOverlay]) {
+    init(timeRange: CMTimeRange, from: LayerInfo, to: LayerInfo?, transitionID: Int, texts: [TextOverlay], project: ProjectInfo) {
         self.timeRange = timeRange
         self.from = from
         self.to = to
         self.transitionID = transitionID
         self.texts = texts
+        self.project = project
         var ids: [NSValue] = [NSNumber(value: from.trackID)]
         if let to = to { ids.append(NSNumber(value: to.trackID)) }
         self.requiredSourceTrackIDs = ids
@@ -1664,17 +2139,30 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
                 let size = request.renderContext.size
                 let rect = CGRect(origin: .zero, size: size)
                 let time = request.compositionTime.secs
+                let proj = instruction.project
 
                 var output: CIImage
                 if let toLayer = instruction.to {
-                    let a = self.frame(for: instruction.from, request: request, rect: rect)
-                    let b = self.frame(for: toLayer, request: request, rect: rect)
+                    let a = self.frame(for: instruction.from, request: request, rect: rect, time: time, project: proj)
+                    let b = self.frame(for: toLayer, request: request, rect: rect, time: time, project: proj)
                     let start = instruction.timeRange.start.secs
                     let dur = max(0.001, instruction.timeRange.duration.secs)
                     let p = CGFloat(min(1, max(0, (time - start) / dur)))
                     output = TransitionRenderer.render(id: instruction.transitionID, from: a, to: b, t: p, rect: rect)
                 } else {
-                    output = self.frame(for: instruction.from, request: request, rect: rect)
+                    output = self.frame(for: instruction.from, request: request, rect: rect, time: time, project: proj)
+                }
+
+                // Анимация появления в самом начале и затухания в самом конце
+                let black = CIImage(color: CIColor.black).cropped(to: rect)
+                if proj.introID != 0, proj.introDuration > 0.01, time < proj.introDuration {
+                    output = TransitionRenderer.render(id: proj.introID, from: black, to: output,
+                                                       t: CGFloat(time / proj.introDuration), rect: rect)
+                }
+                if proj.outroID != 0, proj.outroDuration > 0.01, time > proj.total - proj.outroDuration {
+                    let p = (time - (proj.total - proj.outroDuration)) / proj.outroDuration
+                    output = TransitionRenderer.render(id: proj.outroID, from: output, to: black,
+                                                       t: CGFloat(min(1, max(0, p))), rect: rect)
                 }
 
                 for o in instruction.texts where time >= o.start && time < o.start + o.duration {
@@ -1687,7 +2175,6 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
             }
         }
     }
-
 
     // MARK: Text overlay (позиция, поворот, анимации появления/исчезания)
 
@@ -1776,34 +2263,6 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
         CIImage(color: CIColor.black).cropped(to: rect)
     }
 
-    private func frame(for layer: LayerInfo, request: AVAsynchronousVideoCompositionRequest, rect: CGRect) -> CIImage {
-        guard let pb = request.sourceFrame(byTrackID: layer.trackID) else { return black(rect) }
-
-        var img = CIImage(cvPixelBuffer: pb).oriented(layer.orientation)
-        let e = img.extent
-        img = img.transformed(by: CGAffineTransform(translationX: -e.origin.x, y: -e.origin.y))
-
-        // ФИЛЬТР КЛИПА (у каждого клипа свой)
-        if layer.filter != .none {
-            let filtered = layer.filter.apply(to: img)
-            if layer.intensity >= 0.99 {
-                img = filtered
-            } else {
-                img = opacity(filtered, CGFloat(layer.intensity)).composited(over: img)
-            }
-        }
-
-        // Вписываем в кадр
-        let w = img.extent.width, h = img.extent.height
-        guard w > 0, h > 0 else { return black(rect) }
-        let s = min(rect.width / w, rect.height / h)
-        let tx = (rect.width - w * s) / 2
-        let ty = (rect.height - h * s) / 2
-        img = img.transformed(by: CGAffineTransform(scaleX: s, y: s))
-                 .transformed(by: CGAffineTransform(translationX: tx, y: ty))
-        return img.composited(over: black(rect)).cropped(to: rect)
-    }
-
     private func opacity(_ image: CIImage, _ a: CGFloat) -> CIImage {
         guard a < 0.999 else { return image }
         return image.applyingFilter("CIColorMatrix", parameters: [
@@ -1815,6 +2274,117 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
         ])
     }
 
+    /// Маска человека (Vision). Работает на iOS 15+.
+    private func personMask(_ pb: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> CIImage? {
+        if #available(iOS 15.0, *) {
+            let req = VNGeneratePersonSegmentationRequest()
+            req.qualityLevel = .balanced
+            req.outputPixelFormat = kCVPixelFormatType_OneComponent8
+            let handler = VNImageRequestHandler(cvPixelBuffer: pb, orientation: orientation, options: [:])
+            do { try handler.perform([req]) } catch { return nil }
+            guard let obs = req.results?.first as? VNPixelBufferObservation else { return nil }
+            return CIImage(cvPixelBuffer: obs.pixelBuffer)
+        }
+        return nil
+    }
+
+    private func replaceBackground(_ img: CIImage, pb: CVPixelBuffer, layer: LayerInfo) -> CIImage {
+        guard let rawMask = personMask(pb, orientation: layer.orientation) else { return img }
+        let e = img.extent
+        let m0 = rawMask.extent
+        guard m0.width > 0, m0.height > 0 else { return img }
+        let mask = rawMask
+            .transformed(by: CGAffineTransform(translationX: -m0.minX, y: -m0.minY))
+            .transformed(by: CGAffineTransform(scaleX: e.width / m0.width, y: e.height / m0.height))
+            .clampedToExtent()
+            .applyingGaussianBlur(sigma: max(1, Double(e.height) * 0.0015))
+            .cropped(to: e)
+
+        var bg: CIImage
+        switch layer.bgMode {
+        case 1:
+            if let b = layer.bgImage {
+                let be = b.extent
+                let s = max(e.width / be.width, e.height / be.height)
+                bg = b.transformed(by: CGAffineTransform(scaleX: s, y: s))
+                let se = bg.extent
+                bg = bg.transformed(by: CGAffineTransform(translationX: e.midX - se.midX, y: e.midY - se.midY)).cropped(to: e)
+            } else {
+                bg = img
+            }
+        case 2:
+            bg = img.clampedToExtent().applyingGaussianBlur(sigma: Double(e.height) * 0.035).cropped(to: e)
+        default:
+            bg = CIImage(color: layer.bgColor ?? CIColor.black).cropped(to: e)
+        }
+        return img.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: bg, kCIInputMaskImageKey: mask
+        ]).cropped(to: e)
+    }
+
+    private func frame(for layer: LayerInfo, request: AVAsynchronousVideoCompositionRequest,
+                       rect: CGRect, time: Double, project: ProjectInfo) -> CIImage {
+        guard let pb = request.sourceFrame(byTrackID: layer.trackID) else { return black(rect) }
+
+        var img = CIImage(cvPixelBuffer: pb).oriented(layer.orientation)
+        let e0 = img.extent
+        img = img.transformed(by: CGAffineTransform(translationX: -e0.origin.x, y: -e0.origin.y))
+
+        // Вырезаем человека и подставляем фон
+        if layer.bgMode != 0 { img = replaceBackground(img, pb: pb, layer: layer) }
+
+        // Фильтр (пресет с силой) + ручная настройка + живой эффект
+        if let preset = layer.preset {
+            let filtered = preset.apply(to: img, time: time)
+            img = layer.intensity >= 0.99 ? filtered
+                : opacity(filtered, CGFloat(layer.intensity)).composited(over: img).cropped(to: img.extent)
+        }
+        if !layer.custom.isIdentity { img = layer.custom.apply(to: img, time: time) }
+        if layer.look != .none { img = layer.look.apply(to: img, time: time) }
+
+        // Формат кадра: вписать или заполнить
+        let w = img.extent.width, h = img.extent.height
+        guard w > 0, h > 0 else { return black(rect) }
+        let fit = min(rect.width / w, rect.height / h)
+        let fill = max(rect.width / w, rect.height / h)
+        let s = project.fillMode == 1 ? fill : fit
+
+        var placed = img.transformed(by: CGAffineTransform(scaleX: s, y: s))
+        let pe = placed.extent
+        placed = placed.transformed(by: CGAffineTransform(translationX: rect.midX - pe.midX, y: rect.midY - pe.midY))
+
+        // Отражение / поворот / масштаб (вокруг центра кадра)
+        if layer.flipH || layer.flipV || layer.rotation != 0 || layer.zoom != 1 {
+            // при повороте в режиме «вписать» сами уменьшаем, чтобы картинка не обрезалась
+            var auto: CGFloat = 1
+            if project.fillMode == 0 && layer.rotation != 0 {
+                let th = CGFloat(layer.rotation) * .pi / 180
+                let bw = abs(pe.width * cos(th)) + abs(pe.height * sin(th))
+                let bh = abs(pe.width * sin(th)) + abs(pe.height * cos(th))
+                if bw > 0 && bh > 0 { auto = min(1, rect.width / bw, rect.height / bh) }
+            }
+            let z = CGFloat(layer.zoom) * auto
+            var t = CGAffineTransform(translationX: -rect.midX, y: -rect.midY)
+            t = t.concatenating(CGAffineTransform(scaleX: layer.flipH ? -z : z, y: layer.flipV ? -z : z))
+            t = t.concatenating(CGAffineTransform(rotationAngle: -CGFloat(layer.rotation) * .pi / 180))
+            t = t.concatenating(CGAffineTransform(translationX: rect.midX, y: rect.midY))
+            placed = placed.transformed(by: t)
+        }
+
+        // Фон кадра: чёрный или размытая копия видео
+        var base = black(rect)
+        if project.fillMode == 0 && project.blurBackground {
+            let sf = fill
+            var bgImg = img.transformed(by: CGAffineTransform(scaleX: sf, y: sf))
+            let be = bgImg.extent
+            bgImg = bgImg.transformed(by: CGAffineTransform(translationX: rect.midX - be.midX, y: rect.midY - be.midY))
+            base = bgImg.clampedToExtent()
+                .applyingGaussianBlur(sigma: Double(rect.height) * 0.03)
+                .applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: -0.18])
+                .cropped(to: rect)
+        }
+        return placed.composited(over: base).cropped(to: rect)
+    }
 }
 
 // =====================================================================
@@ -1828,6 +2398,7 @@ final class EditorBuild {
     let renderSize: CGSize
     let trackIDs: [CMPersistentTrackID]
     let orientations: [CGImagePropertyOrientation]
+    private var bgImages: [String: CIImage] = [:]
 
     init(composition: AVMutableComposition, audioMix: AVMutableAudioMix?, layout: TimelineLayout,
          renderSize: CGSize, trackIDs: [CMPersistentTrackID], orientations: [CGImagePropertyOrientation]) {
@@ -1839,7 +2410,40 @@ final class EditorBuild {
         self.orientations = orientations
     }
 
-    static func make(clips: [VideoClip], audios: [AudioClip]) -> EditorBuild? {
+    private func bgImage(for file: String) -> CIImage? {
+        if let c = bgImages[file] { return c }
+        let url = DraftStore.shared.mediaURL(file)
+        guard var img = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) else { return nil }
+        let e = img.extent
+        img = img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+        bgImages[file] = img
+        return img
+    }
+
+    static func frameSize(for project: ProjectSettings, firstClip: VideoClip) -> CGSize {
+        if let r = project.ratio {
+            let longSide: CGFloat = 1920
+            var w: CGFloat, h: CGFloat
+            if r >= 1 { w = longSide; h = longSide / CGFloat(r) } else { h = longSide; w = longSide * CGFloat(r) }
+            return CGSize(width: max(2, floor(w / 2) * 2), height: max(2, floor(h / 2) * 2))
+        }
+        var size = CGSize(width: 1080, height: 1920)
+        if let t = firstClip.asset.tracks(withMediaType: .video).first {
+            let r = CGRect(origin: .zero, size: t.naturalSize).applying(t.preferredTransform)
+            var w = abs(r.width), h = abs(r.height)
+            if w > 1 && h > 1 {
+                let maxSide: CGFloat = 1920
+                if max(w, h) > maxSide {
+                    let k = maxSide / max(w, h)
+                    w *= k; h *= k
+                }
+                size = CGSize(width: floor(w / 2) * 2, height: floor(h / 2) * 2)
+            }
+        }
+        return size
+    }
+
+    static func make(clips: [VideoClip], audios: [AudioClip], project: ProjectSettings) -> EditorBuild? {
         guard !clips.isEmpty else { return nil }
 
         let comp = AVMutableComposition()
@@ -1870,21 +2474,25 @@ final class EditorBuild {
                 orientations.append(.up)
             }
 
-            if let srcA = clip.asset.tracks(withMediaType: .audio).first {
+            // Звук клипа: после эффекта (processedAudio) или оригинал; громкость у каждого куска своя
+            let audioAsset = clip.processedAudio ?? clip.asset
+            if clip.volume > 0.001, let srcA = audioAsset.tracks(withMediaType: .audio).first {
                 try? audioTracks[slot].insertTimeRange(clip.sourceRange, of: srcA, at: start)
                 if clip.speed != 1 {
                     audioTracks[slot].scaleTimeRange(CMTimeRange(start: start, duration: clip.sourceRange.duration), toDuration: dur)
                 }
                 let p = audioParams[slot]
-                let ovIn = layout.overlapIn(i), ovOut = layout.overlapOut(i)
-                if ovIn > .zero {
-                    p.setVolumeRamp(fromStartVolume: 0, toEndVolume: clip.volume, timeRange: CMTimeRange(start: start, duration: ovIn))
+                let half = dur.secs / 2
+                let inD = floorTicks(min(max(layout.overlapIn(i).secs, clip.fadeIn), half))
+                let outD = floorTicks(min(max(layout.overlapOut(i).secs, clip.fadeOut), half))
+                if inD > .zero {
+                    p.setVolumeRamp(fromStartVolume: 0, toEndVolume: clip.volume, timeRange: CMTimeRange(start: start, duration: inD))
                 } else {
                     p.setVolume(clip.volume, at: start)
                 }
-                if ovOut > .zero {
+                if outD > .zero {
                     p.setVolumeRamp(fromStartVolume: clip.volume, toEndVolume: 0,
-                                    timeRange: CMTimeRange(start: start + dur - ovOut, duration: ovOut))
+                                    timeRange: CMTimeRange(start: start + dur - outD, duration: outD))
                 }
             }
         }
@@ -1892,43 +2500,39 @@ final class EditorBuild {
         var params: [AVMutableAudioMixInputParameters] = audioParams
 
         for a in audios {
-            guard let src = a.asset.tracks(withMediaType: .audio).first,
+            let asset = a.processed ?? a.asset
+            guard let src = asset.tracks(withMediaType: .audio).first,
                   let tr = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
             else { continue }
             let dur = min(a.duration, layout.total.secs - a.start, a.sourceDuration - a.sourceOffset)
             guard dur > 0.05 else { continue }
-            try? tr.insertTimeRange(CMTimeRange(start: ticks(a.sourceOffset), duration: floorTicks(dur)),
-                                    of: src, at: ticks(a.start))
+            let startT = ticks(a.start)
+            try? tr.insertTimeRange(CMTimeRange(start: ticks(a.sourceOffset), duration: floorTicks(dur)), of: src, at: startT)
             let mp = AVMutableAudioMixInputParameters(track: tr)
-            mp.setVolume(a.volume, at: .zero)
+            let half = dur / 2
+            let inD = floorTicks(min(a.fadeIn, half)), outD = floorTicks(min(a.fadeOut, half))
+            if inD > .zero {
+                mp.setVolumeRamp(fromStartVolume: 0, toEndVolume: a.volume, timeRange: CMTimeRange(start: startT, duration: inD))
+            } else {
+                mp.setVolume(a.volume, at: startT)
+            }
+            if outD > .zero {
+                mp.setVolumeRamp(fromStartVolume: a.volume, toEndVolume: 0,
+                                 timeRange: CMTimeRange(start: startT + floorTicks(dur) - outD, duration: outD))
+            }
             params.append(mp)
         }
 
         let mix = AVMutableAudioMix()
         mix.inputParameters = params
 
-        // Размер кадра по первому клипу (с учётом поворота)
-        var size = CGSize(width: 1080, height: 1920)
-        if let t = clips[0].asset.tracks(withMediaType: .video).first {
-            let r = CGRect(origin: .zero, size: t.naturalSize).applying(t.preferredTransform)
-            var w = abs(r.width), h = abs(r.height)
-            if w > 1 && h > 1 {
-                let maxSide: CGFloat = 1920
-                if max(w, h) > maxSide {
-                    let k = maxSide / max(w, h)
-                    w *= k; h *= k
-                }
-                size = CGSize(width: floor(w / 2) * 2, height: floor(h / 2) * 2)
-            }
-        }
-
-        return EditorBuild(composition: comp, audioMix: mix, layout: layout, renderSize: size,
+        return EditorBuild(composition: comp, audioMix: mix, layout: layout,
+                           renderSize: frameSize(for: project, firstClip: clips[0]),
                            trackIDs: [vA.trackID, vB.trackID], orientations: orientations)
     }
 
-
     /// Инструкции дёшево пересобираются — поэтому смена фильтра/текста не пересобирает всю композицию.
-    func makeVideoComposition(clips: [VideoClip], texts: [TextOverlay]) -> AVMutableVideoComposition {
+    func makeVideoComposition(clips: [VideoClip], texts: [TextOverlay], project: ProjectSettings) -> AVMutableVideoComposition {
         enum Seg { case solo(Int), trans(Int) }
         var segs: [(CMTime, CMTime, Seg)] = []
 
@@ -1944,9 +2548,21 @@ final class EditorBuild {
 
         func layer(_ i: Int) -> LayerInfo {
             let c = clips[min(i, clips.count - 1)]
-            return LayerInfo(trackID: trackIDs[i % 2], orientation: orientations[i], filter: c.filter, intensity: c.filterIntensity)
+            var bgImg: CIImage? = nil
+            var bgCol: CIColor? = nil
+            if c.bgMode == 1, let f = c.bgFile { bgImg = bgImage(for: f) }
+            if c.bgMode == 3 { bgCol = CIColor(color: TextPalette.color(c.bgColor)) }
+            return LayerInfo(trackID: trackIDs[i % 2], orientation: orientations[i],
+                             preset: FilterCatalog.preset(c.filterID)?.adjust, intensity: c.filterIntensity,
+                             custom: c.adjust, look: VideoLook(rawValue: c.look) ?? .none,
+                             flipH: c.flipH, flipV: c.flipV, rotation: c.rotation, zoom: c.zoom,
+                             bgMode: c.bgMode, bgImage: bgImg, bgColor: bgCol)
         }
 
+        let info = ProjectInfo(fillMode: project.fillMode, blurBackground: project.blurBackground,
+                               introID: project.introID, introDuration: project.introDuration,
+                               outroID: project.outroID, outroDuration: project.outroDuration,
+                               total: layout.total.secs)
         let endTime = max(layout.total, composition.duration)
         var instructions: [AVVideoCompositionInstructionProtocol] = []
 
@@ -1956,10 +2572,10 @@ final class EditorBuild {
             let range = CMTimeRange(start: seg.0, end: e)
             switch seg.2 {
             case .solo(let i):
-                instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: nil, transitionID: 0, texts: texts))
+                instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: nil, transitionID: 0, texts: texts, project: info))
             case .trans(let i):
                 instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: layer(i + 1),
-                                                      transitionID: clips[i].transitionID, texts: texts))
+                                                      transitionID: clips[i].transitionID, texts: texts, project: info))
             }
         }
 
@@ -2070,8 +2686,10 @@ final class ClipTileView: UIView {
 
         var info = String(format: " %.1fс", clip.displayDuration.secs)
         if clip.speed != 1 { info += String(format: " ⚡%gx", Double(clip.speed)) }
-        if clip.filter != .none { info += " ✦" }
-        if clip.volume == 0 { info += " 🔇" }
+        if clip.filterID != 0 || !clip.adjust.isIdentity { info += " ✦" }
+        if clip.look != 0 { info += " ⚡︎" }
+        if clip.isImage { info += " 🖼" }
+        if clip.volume == 0 && !clip.isImage { info += " 🔇" }
         info += " "
         let label = UILabel()
         label.text = info
@@ -2136,25 +2754,44 @@ final class AudioBarView: UIView {
     }
 }
 
+enum TimelineLane { case video, text, audio }
+
+/// UIScrollView, который не начинает скролл, если палец лёг на ручку обрезки / выбранную полоску.
+final class TimelineScrollView: UIScrollView {
+    var touchDownPoint: CGPoint = .zero
+    var blocksScroll: ((CGPoint) -> Bool)?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        touchDownPoint = point
+        return super.hitTest(point, with: event)
+    }
+
+    override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        if g === panGestureRecognizer, blocksScroll?(touchDownPoint) == true { return false }
+        return super.gestureRecognizerShouldBegin(g)
+    }
+}
+
 final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
 
-    static let minHeight: CGFloat = 112
+    static let minHeight: CGFloat = 166
 
     private let pps: CGFloat = 64               // точек на секунду
     private let clipTop: CGFloat = 26
     private let clipHeight: CGFloat = 56
     private let laneHeight: CGFloat = 26
     private let laneStep: CGFloat = 30
-    private let handleZone: CGFloat = 22
+    private let handleZone: CGFloat = 24
     private let minDur: Double = 0.3
 
-    private let scrollView = UIScrollView()
+    private let scrollView = TimelineScrollView()
     private let contentView = UIView()
     private let ruler = RulerView()
     private let playhead = UIView()
     private let knob = UIView()
     private let addTile = UIView()
-    private var press: UILongPressGestureRecognizer!
+    private var chips: [TimelineLane: UIButton] = [:]
+    private var dragPan: UIPanGestureRecognizer!
 
     // callbacks
     var onScrubBegan: (() -> Void)?
@@ -2163,6 +2800,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     var onSelectText: ((UUID) -> Void)?
     var onSelectAudio: ((UUID) -> Void)?
     var onDeselectAll: (() -> Void)?
+    var onFocusLane: ((TimelineLane) -> Void)?
     var onTapTransition: ((Int) -> Void)?
     var onTapAdd: (() -> Void)?
     var onClipTrimmed: ((Int, CMTimeRange) -> Void)?
@@ -2177,6 +2815,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     private var selectedClip: Int?
     private var selectedText: UUID?
     private var selectedAudio: UUID?
+    private var focus: TimelineLane = .video
 
     private struct Item { let id: UUID; let frame: CGRect; let view: UIView }
     private var clipFrames: [CGRect] = []
@@ -2184,6 +2823,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     private var transitionFrames: [CGRect] = []
     private var textItems: [Item] = []
     private var audioItems: [Item] = []
+    private var laneRows: [(lane: TimelineLane, rect: CGRect)] = []
     private(set) var requiredHeight: CGFloat = TimelineView.minHeight
 
     private var isProgrammatic = false
@@ -2226,6 +2866,8 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         scrollView.alwaysBounceHorizontal = true
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.decelerationRate = .fast
+        scrollView.delaysContentTouches = false
+        scrollView.blocksScroll = { [weak self] p in self?.hitTarget(at: p) != nil }
         addSubview(scrollView)
         scrollView.addSubview(contentView)
         addSubview(ruler)
@@ -2261,16 +2903,33 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             make.size.equalTo(10)
         }
 
+        // Кнопки-«метки» дорожек (не скроллятся): тап = перенести фокус на дорожку
+        let defs: [(TimelineLane, String)] = [(.video, "film"), (.text, "textformat"), (.audio, "music.note")]
+        for (lane, symbol) in defs {
+            let b = UIButton(type: .system)
+            b.setImage(UIImage(systemName: symbol), for: .normal)
+            b.layer.cornerRadius = 6
+            b.tag = lane == .video ? 0 : (lane == .text ? 1 : 2)
+            b.addTarget(self, action: #selector(chipTapped(_:)), for: .touchUpInside)
+            addSubview(b)
+            chips[lane] = b
+        }
+        bringSubviewToFront(ruler)
+        bringSubviewToFront(playhead)
+        bringSubviewToFront(knob)
+        chips.values.forEach { bringSubviewToFront($0) }
+
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         contentView.addGestureRecognizer(tap)
 
-        // Нулевое «долгое нажатие» = жест перетаскивания, который начинается сразу при касании
-        // ручки/полоски; на пустом месте он сразу «проваливается» и лента скроллится как обычно.
-        press = UILongPressGestureRecognizer(target: self, action: #selector(handlePress(_:)))
-        press.minimumPressDuration = 0
-        press.delegate = self
-        contentView.addGestureRecognizer(press)
-        scrollView.panGestureRecognizer.require(toFail: press)
+        dragPan = UIPanGestureRecognizer(target: self, action: #selector(handleDrag(_:)))
+        dragPan.maximumNumberOfTouches = 1
+        dragPan.delegate = self
+        contentView.addGestureRecognizer(dragPan)
+    }
+
+    @objc private func chipTapped(_ b: UIButton) {
+        onFocusLane?(b.tag == 0 ? .video : (b.tag == 1 ? .text : .audio))
     }
 
     override func layoutSubviews() {
@@ -2286,7 +2945,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     // MARK: Public
 
     func reload(clips: [VideoClip], layout: TimelineLayout, texts: [TextOverlay], audios: [AudioClip],
-                selectedClip: Int?, selectedText: UUID?, selectedAudio: UUID?) {
+                selectedClip: Int?, selectedText: UUID?, selectedAudio: UUID?, focus: TimelineLane) {
         self.clips = clips
         self.layout = layout
         self.texts = texts
@@ -2294,6 +2953,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         self.selectedClip = selectedClip
         self.selectedText = selectedText
         self.selectedAudio = selectedAudio
+        self.focus = focus
         rebuildContent()
         setPlayhead(time: lastPlayheadTime, force: true)
     }
@@ -2338,7 +2998,49 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         ruler.pps = pps
         ruler.total = totalSeconds
 
-        clipFrames = []; clipViews = []; transitionFrames = []; textItems = []; audioItems = []
+        clipFrames = []; clipViews = []; transitionFrames = []; textItems = []; audioItems = []; laneRows = []
+
+        // Раскладка дорожек: текст и аудио видны ВСЕГДА (минимум по одной строке)
+        let tl = assignLanes(texts.map { ($0.start, max($0.start + $0.duration, $0.start + 24 / Double(pps))) })
+        let al = assignLanes(audios.map { ($0.start, $0.start + $0.duration) })
+        let textRows = max(1, tl.count), audioRows = max(1, al.count)
+        let textBase = clipTop + clipHeight + 8
+        let audioBase = textBase + CGFloat(textRows) * laneStep + 4
+        let trackWidth = CGFloat(totalSeconds) * pps
+
+        func addLaneBackground(_ lane: TimelineLane, y: CGFloat, height: CGFloat) {
+            let focused = (focus == lane)
+            if trackWidth > 0 {
+                let bg = UIView(frame: CGRect(x: side, y: y, width: trackWidth, height: height))
+                bg.backgroundColor = UIColor(white: 1, alpha: focused ? 0.13 : 0.06)
+                bg.layer.cornerRadius = 6
+                if focused { bg.layer.borderWidth = 1; bg.layer.borderColor = Theme.accent.withAlphaComponent(0.7).cgColor }
+                contentView.addSubview(bg)
+            }
+            laneRows.append((lane, CGRect(x: 0, y: y - 2, width: contentW, height: height + 4)))
+        }
+        addLaneBackground(.video, y: clipTop - 2, height: clipHeight + 4)
+        addLaneBackground(.text, y: textBase - 2, height: CGFloat(textRows) * laneStep)
+        addLaneBackground(.audio, y: audioBase - 2, height: CGFloat(audioRows) * laneStep)
+
+        func hint(_ text: String, y: CGFloat) {
+            let l = UILabel(frame: CGRect(x: side + 10, y: y, width: 240, height: laneHeight))
+            l.text = text
+            l.font = .systemFont(ofSize: 11, weight: .medium)
+            l.textColor = UIColor(white: 1, alpha: 0.35)
+            contentView.addSubview(l)
+        }
+        if texts.isEmpty { hint("Текст — нажмите «Текст» внизу", y: textBase) }
+        if audios.isEmpty { hint("Аудио — нажмите «Аудио» внизу", y: audioBase) }
+
+        // Метки дорожек слева
+        let chipY: [TimelineLane: CGFloat] = [.video: clipTop + (clipHeight - 24) / 2, .text: textBase + 1, .audio: audioBase + 1]
+        for (lane, b) in chips {
+            let on = focus == lane
+            b.frame = CGRect(x: 6, y: chipY[lane] ?? 0, width: 28, height: 24)
+            b.backgroundColor = on ? Theme.accent : UIColor(white: 0.22, alpha: 0.95)
+            b.tintColor = on ? .black : .white
+        }
 
         // Видео
         for (i, clip) in clips.enumerated() where i < layout.starts.count {
@@ -2375,12 +3077,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             }
         }
 
-        // Дорожки текста и аудио (под видео)
-        let tl = assignLanes(texts.map { ($0.start, max($0.start + $0.duration, $0.start + 24 / Double(pps))) })
-        let al = assignLanes(audios.map { ($0.start, $0.start + $0.duration) })
-        let textBase = clipTop + clipHeight + 8
-        let audioBase = textBase + CGFloat(tl.count) * laneStep + (tl.count > 0 ? 4 : 0)
-
+        // Текст
         for (k, o) in texts.enumerated() {
             let x = side + CGFloat(o.start) * pps
             let w = max(24, CGFloat(o.duration) * pps)
@@ -2403,6 +3100,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             textItems.append(Item(id: o.id, frame: bar.frame, view: bar))
         }
 
+        // Аудио
         for (k, a) in audios.enumerated() {
             let x = side + CGFloat(a.start) * pps
             let w = max(24, CGFloat(a.duration) * pps)
@@ -2421,10 +3119,10 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             audioItems.append(Item(id: a.id, frame: bar.frame, view: bar))
         }
 
-        addTile.frame = CGRect(x: side + CGFloat(totalSeconds) * pps + 10, y: clipTop, width: 56, height: clipHeight)
+        addTile.frame = CGRect(x: side + trackWidth + 10, y: clipTop, width: 56, height: clipHeight)
         contentView.addSubview(addTile)
 
-        let needed = max(TimelineView.minHeight, audioBase + CGFloat(al.count) * laneStep + 8)
+        let needed = max(TimelineView.minHeight, audioBase + CGFloat(audioRows) * laneStep + 8)
         if abs(needed - requiredHeight) > 0.5 {
             requiredHeight = needed
             onNeedHeight?(needed)
@@ -2442,57 +3140,64 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             onTapTransition?(j)
             return
         }
+        for item in textItems.reversed() where item.frame.contains(p) { onSelectText?(item.id); return }
+        for item in audioItems.reversed() where item.frame.contains(p) { onSelectAudio?(item.id); return }
         for (i, f) in clipFrames.enumerated().reversed() where f.contains(p) {
             if i == selectedClip { onDeselectAll?() } else { onSelectClip?(i) }
+            return
+        }
+        // Тап по пустому месту дорожки = перенести фокус на эту дорожку
+        for row in laneRows where row.rect.contains(p) {
+            onFocusLane?(row.lane)
             return
         }
         onDeselectAll?()
     }
 
-    // MARK: Drag / trim
+    // MARK: Drag / trim  (приоритет у ручек и выбранных полосок — скролл в этих местах отключён)
 
     private func hitTarget(at p: CGPoint) -> DragKind? {
-        // Ручки выбранного клипа
         if let s = selectedClip, s < clipFrames.count {
             let f = clipFrames[s]
-            let hz = min(handleZone, f.width / 3)
-            if p.y >= f.minY && p.y <= f.maxY {
-                if p.x >= f.minX - 8 && p.x <= f.minX + hz { return .clipLeft(s) }
-                if p.x <= f.maxX + 8 && p.x >= f.maxX - hz { return .clipRight(s) }
+            let hz = min(handleZone, f.width / 2.5)
+            if p.y >= f.minY - 4 && p.y <= f.maxY + 4 {
+                if p.x >= f.minX - 10 && p.x <= f.minX + hz { return .clipLeft(s) }
+                if p.x <= f.maxX + 10 && p.x >= f.maxX - hz { return .clipRight(s) }
             }
         }
-        for item in textItems.reversed() where item.frame.insetBy(dx: -6, dy: -3).contains(p) {
-            if item.id == selectedText {
-                let hz = min(handleZone, item.frame.width / 3)
-                if p.x <= item.frame.minX + hz { return .textLeft(item.id) }
-                if p.x >= item.frame.maxX - hz { return .textRight(item.id) }
-            }
-            return .textMove(item.id)
+        if let id = selectedText, let item = textItems.first(where: { $0.id == id }),
+           item.frame.insetBy(dx: -10, dy: -4).contains(p) {
+            let hz = min(handleZone, item.frame.width / 3)
+            if p.x <= item.frame.minX + hz { return .textLeft(id) }
+            if p.x >= item.frame.maxX - hz { return .textRight(id) }
+            return .textMove(id)
         }
-        for item in audioItems.reversed() where item.frame.insetBy(dx: -6, dy: -3).contains(p) {
-            if item.id == selectedAudio {
-                let hz = min(handleZone, item.frame.width / 3)
-                if p.x <= item.frame.minX + hz { return .audioLeft(item.id) }
-                if p.x >= item.frame.maxX - hz { return .audioRight(item.id) }
-            }
-            return .audioMove(item.id)
+        if let id = selectedAudio, let item = audioItems.first(where: { $0.id == id }),
+           item.frame.insetBy(dx: -10, dy: -4).contains(p) {
+            let hz = min(handleZone, item.frame.width / 3)
+            if p.x <= item.frame.minX + hz { return .audioLeft(id) }
+            if p.x >= item.frame.maxX - hz { return .audioRight(id) }
+            return .audioMove(id)
         }
         return nil
     }
 
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-        if g === press {
-            guard !isUserScrolling else { return false }
-            return hitTarget(at: g.location(in: contentView)) != nil
+        if g === dragPan {
+            return hitTarget(at: scrollView.touchDownPoint) != nil
         }
         return true
     }
 
-    @objc private func handlePress(_ g: UILongPressGestureRecognizer) {
+    @objc private func handleDrag(_ g: UIPanGestureRecognizer) {
         let x = g.location(in: contentView).x
         switch g.state {
         case .began:
-            if let kind = hitTarget(at: g.location(in: contentView)) { beginDrag(kind, x: x) }
+            let p = scrollView.touchDownPoint
+            if let kind = hitTarget(at: p) {
+                beginDrag(kind, x: p.x)
+                updateDrag(x: x)
+            }
         case .changed:
             updateDrag(x: x)
         case .ended:
@@ -2572,7 +3277,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             case .audioMove:
                 ns = min(max(0, s0 + dx), max(0, total - a.duration)); ne = ns + a.duration
             case .audioLeft:
-                // можно тянуть влево только до начала исходного файла
+                // тянуть влево можно только до начала исходного файла
                 let minStart = max(0, s0 - a.sourceOffset)
                 ns = min(max(minStart, s0 + dx), e0 - minDur)
                 off = a.sourceOffset + (ns - s0)
@@ -2596,13 +3301,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         guard let d = drag else { return }
         drag = nil
         guard commit, d.moved else {
-            if commit {
-                switch d.kind {
-                case .textMove(let id), .textLeft(let id), .textRight(let id): onSelectText?(id)
-                case .audioMove(let id), .audioLeft(let id), .audioRight(let id): onSelectAudio?(id)
-                default: break
-                }
-            }
             rebuildContent()
             return
         }
@@ -2645,6 +3343,7 @@ struct PanelItem {
     var on: Bool? = nil            // для переключателей (курсив, подчёркивание…)
     var fit: Bool = false          // картинка вписывается целиком (превью текста)
     var previewKey: String? = nil  // ленивое превью (переходы)
+    var favorite: Bool? = nil      // nil — без сердечка
 }
 
 typealias PreviewProvider = (String, @escaping () -> Bool, @escaping (UIImage?) -> Void) -> Void
@@ -2666,6 +3365,8 @@ final class PanelItemCell: UICollectionViewCell {
     private let badgeLabel = UILabel()
     private let swatchView = UIView()
     private let titleLabel = UILabel()
+    private let heartButton = UIButton(type: .system)
+    var onHeart: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -2706,6 +3407,13 @@ final class PanelItemCell: UICollectionViewCell {
             make.top.centerX.equalToSuperview()
             make.size.equalTo(56)
         }
+        heartButton.addTarget(self, action: #selector(heartTapped), for: .touchUpInside)
+        contentView.addSubview(heartButton)
+        heartButton.snp.makeConstraints { make in
+            make.top.equalTo(box).offset(-6)
+            make.trailing.equalTo(box).offset(6)
+            make.size.equalTo(26)
+        }
         imageView.snp.makeConstraints { $0.edges.equalToSuperview() }
         iconView.snp.makeConstraints { make in make.center.equalToSuperview(); make.size.equalTo(24) }
         badgeLabel.snp.makeConstraints { $0.edges.equalToSuperview() }
@@ -2718,6 +3426,8 @@ final class PanelItemCell: UICollectionViewCell {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private(set) var currentKey: String?
+
+    @objc private func heartTapped() { onHeart?() }
 
     override func prepareForReuse() {
         super.prepareForReuse()
@@ -2738,6 +3448,10 @@ final class PanelItemCell: UICollectionViewCell {
         badgeLabel.isHidden = item.badge == nil
         swatchView.backgroundColor = item.swatch
         swatchView.isHidden = item.swatch == nil
+        heartButton.isHidden = item.favorite == nil
+        let fav = item.favorite == true
+        heartButton.setImage(UIImage(systemName: fav ? "heart.fill" : "heart"), for: .normal)
+        heartButton.tintColor = fav ? .systemPink : UIColor(white: 1, alpha: 0.85)
         let hi = selected || item.on == true
         box.layer.borderWidth = hi ? 2.5 : 0
         titleLabel.textColor = hi ? Theme.accent : .lightGray
@@ -2776,6 +3490,7 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
     var onChip: ((Int) -> Void)?
     var onSelect: ((Int) -> Void)?
     var previewProvider: PreviewProvider?
+    var onFavorite: ((Int) -> Void)?
     var onSliderBegan: (() -> Void)?
     var onSliderChanged: ((Float) -> Void)?
     var onSliderEnded: ((Float) -> Void)?
@@ -2915,6 +3630,8 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: PanelItemCell.reuseId, for: indexPath) as! PanelItemCell
         cell.configure(items[indexPath.item], selected: indexPath.item == selectedIndex, provider: previewProvider)
+        let index = indexPath.item
+        cell.onHeart = { [weak self] in self?.onFavorite?(index) }
         return cell
     }
 
@@ -2928,7 +3645,7 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
 // =====================================================================
 
 enum EditorTool: CaseIterable {
-    case addVideo, split, delete, duplicate, speed, filter, transition, text, audio
+    case addVideo, split, delete, duplicate, speed, filter, adjust, transition, animation, effects, frame, background, text, audio
 
     var title: String {
         switch self {
@@ -2938,9 +3655,14 @@ enum EditorTool: CaseIterable {
         case .duplicate: return "Дубль"
         case .speed: return "Скорость"
         case .filter: return "Фильтры"
+        case .adjust: return "Цвет"
         case .transition: return "Переходы"
+        case .animation: return "Анимация"
+        case .effects: return "Эффекты"
+        case .frame: return "Кадр"
+        case .background: return "Фон"
         case .text: return "Текст"
-        case .audio: return "Музыка"
+        case .audio: return "Аудио"
         }
     }
 
@@ -2952,7 +3674,12 @@ enum EditorTool: CaseIterable {
         case .duplicate: return "plus.square.on.square"
         case .speed: return "speedometer"
         case .filter: return "camera.filters"
+        case .adjust: return "slider.horizontal.3"
         case .transition: return "rectangle.on.rectangle"
+        case .animation: return "wand.and.stars"
+        case .effects: return "sparkles"
+        case .frame: return "crop"
+        case .background: return "person.crop.square"
         case .text: return "textformat"
         case .audio: return "music.note"
         }
@@ -3044,11 +3771,25 @@ struct DraftClip: Codable {
     var srcStart: Double
     var srcDuration: Double
     var speed: Float
-    var filter: Int
+    var filterID: Int?
     var filterIntensity: Float
     var transitionID: Int
     var transitionDuration: Double
     var volume: Float
+    // добавлено позже — optional, чтобы старые черновики открывались
+    var isImage: Bool?
+    var adjust: Adjustments?
+    var look: Int?
+    var flipH: Bool?
+    var flipV: Bool?
+    var rotation: Double?
+    var zoom: Double?
+    var bgMode: Int?
+    var bgFile: String?
+    var bgColor: Int?
+    var audioEffect: Int?
+    var fadeIn: Double?
+    var fadeOut: Double?
 }
 
 struct DraftAudio: Codable {
@@ -3059,6 +3800,9 @@ struct DraftAudio: Codable {
     var sourceOffset: Double
     var duration: Double
     var volume: Float
+    var effect: Int?
+    var fadeIn: Double?
+    var fadeOut: Double?
 }
 
 struct Draft: Codable {
@@ -3068,6 +3812,7 @@ struct Draft: Codable {
     var clips: [DraftClip]
     var texts: [TextOverlay]
     var audios: [DraftAudio]
+    var project: ProjectSettings?
 }
 
 final class DraftStore {
@@ -3431,6 +4176,9 @@ final class TextInputView: UIView, UITextViewDelegate {
     private let textView = UITextView()
     private let placeholder = UILabel()
     private let doneButton = UIButton(type: .system)
+    private let micButton = UIButton(type: .system)
+    private let dictation = SpeechDictation()
+    private var baseText = ""
     private var cardBottom: Constraint!
     private weak var parent: UIView?
 
@@ -3479,7 +4227,27 @@ final class TextInputView: UIView, UITextViewDelegate {
         placeholder.font = .systemFont(ofSize: 17)
         placeholder.isUserInteractionEnabled = false
 
+        micButton.setImage(UIImage(systemName: "mic.fill"), for: .normal)
+        micButton.tintColor = .white
+        micButton.backgroundColor = UIColor(white: 0.32, alpha: 1)
+        micButton.layer.cornerRadius = 20
+        micButton.addTarget(self, action: #selector(micTapped), for: .touchUpInside)
+        dictation.onText = { [weak self] spoken in
+            guard let self = self else { return }
+            self.textView.text = self.baseText.isEmpty ? spoken : self.baseText + " " + spoken
+            self.updateState()
+        }
+        dictation.onStateChange = { [weak self] running in
+            self?.micButton.backgroundColor = running ? .systemRed : UIColor(white: 0.32, alpha: 1)
+            self?.micButton.setImage(UIImage(systemName: running ? "stop.fill" : "mic.fill"), for: .normal)
+        }
+        dictation.onError = { [weak self] message in
+            self?.placeholder.text = message
+            self?.placeholder.isHidden = false
+        }
+
         [cancel, title, doneButton, textView].forEach { card.addSubview($0) }
+        card.addSubview(micButton)
         textView.addSubview(placeholder)
         cancel.snp.makeConstraints { make in make.top.equalToSuperview().offset(6); make.leading.equalToSuperview().offset(12); make.height.equalTo(40) }
         title.snp.makeConstraints { make in make.centerY.equalTo(cancel); make.centerX.equalToSuperview() }
@@ -3491,6 +4259,11 @@ final class TextInputView: UIView, UITextViewDelegate {
             make.bottom.equalToSuperview().inset(14)
         }
         placeholder.snp.makeConstraints { make in make.top.equalToSuperview().offset(12); make.leading.equalToSuperview().offset(15) }
+        micButton.snp.makeConstraints { make in
+            make.trailing.equalTo(textView).inset(8)
+            make.bottom.equalTo(textView).inset(8)
+            make.size.equalTo(40)
+        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -3527,6 +4300,15 @@ final class TextInputView: UIView, UITextViewDelegate {
         UIView.animate(withDuration: d) { self.layoutIfNeeded() }
     }
 
+    @objc private func micTapped() {
+        if dictation.isRunning {
+            dictation.stop()
+        } else {
+            baseText = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            dictation.start()
+        }
+    }
+
     @objc private func cancelTapped() { close() }
 
     @objc private func doneTapped() {
@@ -3536,9 +4318,405 @@ final class TextInputView: UIView, UITextViewDelegate {
     }
 
     private func close() {
+        dictation.stop()
         NotificationCenter.default.removeObserver(self)
         textView.resignFirstResponder()
         UIView.animate(withDuration: 0.2, animations: { self.alpha = 0 }) { _ in self.removeFromSuperview() }
+    }
+}
+
+// =====================================================================
+// MARK: - Media tools: картинка → клип, реверс
+// =====================================================================
+
+enum MediaTools {
+    /// Клип-картинка = короткое «видео» из одного кадра. Длина в файле — максимум, до которого её можно растянуть.
+    static let stillSeconds = 120.0
+
+    private static func finish(_ name: String?, _ completion: @escaping (String?) -> Void) {
+        DispatchQueue.main.async { completion(name) }
+    }
+
+    static func makeStillVideo(image: UIImage, completion: @escaping (String?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let maxSide: CGFloat = 1920
+            let k = min(1, maxSide / max(image.size.width, image.size.height))
+            let w = max(2, floor(image.size.width * k / 2) * 2)
+            let h = max(2, floor(image.size.height * k / 2) * 2)
+            let fmt = UIGraphicsImageRendererFormat()
+            fmt.scale = 1
+            fmt.opaque = true
+            let upright = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: fmt).image { _ in
+                image.draw(in: CGRect(x: 0, y: 0, width: w, height: h))
+            }
+            guard let cg = upright.cgImage else { finish(nil, completion); return }
+            let ci = CIImage(cgImage: cg)
+
+            let name = "\(UUID().uuidString).mp4"
+            let url = DraftStore.shared.mediaURL(name)
+            guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { finish(nil, completion); return }
+            let settings: [String: Any] = [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: Int(w),
+                AVVideoHeightKey: Int(h),
+                AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 3_000_000, AVVideoMaxKeyFrameIntervalKey: 2]
+            ]
+            let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+            input.expectsMediaDataInRealTime = false
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: Int(w),
+                kCVPixelBufferHeightKey as String: Int(h)
+            ])
+            guard writer.canAdd(input) else { finish(nil, completion); return }
+            writer.add(input)
+            guard writer.startWriting() else { finish(nil, completion); return }
+            writer.startSession(atSourceTime: .zero)
+
+            var buf: CVPixelBuffer?
+            if let pool = adaptor.pixelBufferPool { CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buf) }
+            guard let buffer = buf else { finish(nil, completion); return }
+            EditorCompositor.ciContext.render(ci, to: buffer)
+
+            let fps: Int32 = 2
+            let frames = Int(stillSeconds) * Int(fps) + 1
+            for i in 0..<frames {
+                while !input.isReadyForMoreMediaData { usleep(3000) }
+                adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(i), timescale: fps))
+            }
+            input.markAsFinished()
+            writer.finishWriting {
+                finish(writer.status == .completed ? name : nil, completion)
+            }
+        }
+    }
+
+    /// Реверс куска видео (без звука). Память держим малой: идём кусками по 0.5 сек с конца.
+    static func reverse(asset: AVAsset, range: CMTimeRange, completion: @escaping (String?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let track = asset.tracks(withMediaType: .video).first else { finish(nil, completion); return }
+            let nat = track.naturalSize
+            let k = min(1, 1280 / max(nat.width, nat.height))
+            let w = Int(max(2, floor(nat.width * k / 2) * 2))
+            let h = Int(max(2, floor(nat.height * k / 2) * 2))
+            let fpsValue = track.nominalFrameRate > 0 ? Double(track.nominalFrameRate) : 30
+            let fps = Int32(min(60, max(15, fpsValue.rounded())))
+
+            let name = "\(UUID().uuidString).mp4"
+            let url = DraftStore.shared.mediaURL(name)
+            guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { finish(nil, completion); return }
+            let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: w, AVVideoHeightKey: h,
+                AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 8_000_000]
+            ])
+            input.expectsMediaDataInRealTime = false
+            input.transform = track.preferredTransform
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: w, kCVPixelBufferHeightKey as String: h
+            ])
+            guard writer.canAdd(input) else { finish(nil, completion); return }
+            writer.add(input)
+            guard writer.startWriting() else { finish(nil, completion); return }
+            writer.startSession(atSourceTime: .zero)
+
+            let start = range.start.secs
+            var segEnd = range.end.secs
+            var outIndex: Int64 = 0
+
+            while segEnd > start + 0.001 {
+                let segStart = max(start, segEnd - 0.5)
+                guard let reader = try? AVAssetReader(asset: asset) else { break }
+                let out = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                    kCVPixelBufferWidthKey as String: w, kCVPixelBufferHeightKey as String: h
+                ])
+                reader.timeRange = CMTimeRange(start: ticks(segStart), end: ticks(segEnd))
+                guard reader.canAdd(out) else { break }
+                reader.add(out)
+                guard reader.startReading() else { break }
+
+                var frames: [CVPixelBuffer] = []
+                while let sb = out.copyNextSampleBuffer() {
+                    guard let src = CMSampleBufferGetImageBuffer(sb) else { continue }
+                    var dst: CVPixelBuffer?
+                    if let pool = adaptor.pixelBufferPool { CVPixelBufferPoolCreatePixelBuffer(nil, pool, &dst) }
+                    if let d = dst {
+                        EditorCompositor.ciContext.render(CIImage(cvPixelBuffer: src), to: d)
+                        frames.append(d)
+                    }
+                }
+                for buf in frames.reversed() {
+                    while !input.isReadyForMoreMediaData { usleep(3000) }
+                    adaptor.append(buf, withPresentationTime: CMTime(value: outIndex, timescale: fps))
+                    outIndex += 1
+                }
+                segEnd = segStart
+            }
+            input.markAsFinished()
+            writer.finishWriting {
+                finish(writer.status == .completed && outIndex > 0 ? name : nil, completion)
+            }
+        }
+    }
+}
+
+// =====================================================================
+// MARK: - Audio effects (эхо, реверб, голос…)
+// =====================================================================
+
+enum AudioEffect: Int, CaseIterable {
+    case none, echo, hall, cathedral, robot, chipmunk, deep, phone, megaphone, underwater, bass, loud
+
+    var title: String {
+        switch self {
+        case .none: return "Нет"
+        case .echo: return "Эхо"
+        case .hall: return "Зал"
+        case .cathedral: return "Собор"
+        case .robot: return "Робот"
+        case .chipmunk: return "Высокий"
+        case .deep: return "Низкий"
+        case .phone: return "Телефон"
+        case .megaphone: return "Мегафон"
+        case .underwater: return "Под водой"
+        case .bass: return "Бас"
+        case .loud: return "Усиление"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .none: return "xmark"
+        case .echo: return "dot.radiowaves.left.and.right"
+        case .hall: return "building.columns"
+        case .cathedral: return "building.2"
+        case .robot: return "cpu"
+        case .chipmunk: return "hare"
+        case .deep: return "tortoise"
+        case .phone: return "phone"
+        case .megaphone: return "megaphone"
+        case .underwater: return "drop"
+        case .bass: return "speaker.wave.3"
+        case .loud: return "speaker.plus"
+        }
+    }
+}
+
+enum AudioFXStore {
+
+    private static func nodes(for effect: AudioEffect) -> [AVAudioNode] {
+        switch effect {
+        case .none:
+            return []
+        case .echo:
+            let d = AVAudioUnitDelay()
+            d.delayTime = 0.28; d.feedback = 45; d.wetDryMix = 40; d.lowPassCutoff = 8000
+            return [d]
+        case .hall:
+            let r = AVAudioUnitReverb(); r.loadFactoryPreset(.largeHall); r.wetDryMix = 45
+            return [r]
+        case .cathedral:
+            let r = AVAudioUnitReverb(); r.loadFactoryPreset(.cathedral); r.wetDryMix = 60
+            return [r]
+        case .robot:
+            let d = AVAudioUnitDelay()
+            d.delayTime = 0.015; d.feedback = 70; d.wetDryMix = 55
+            let p = AVAudioUnitTimePitch(); p.pitch = -200
+            return [d, p]
+        case .chipmunk:
+            let p = AVAudioUnitTimePitch(); p.pitch = 800
+            return [p]
+        case .deep:
+            let p = AVAudioUnitTimePitch(); p.pitch = -600
+            return [p]
+        case .phone:
+            let eq = AVAudioUnitEQ(numberOfBands: 2)
+            eq.bands[0].filterType = .highPass; eq.bands[0].frequency = 500; eq.bands[0].bypass = false
+            eq.bands[1].filterType = .lowPass; eq.bands[1].frequency = 3400; eq.bands[1].bypass = false
+            return [eq]
+        case .megaphone:
+            let eq = AVAudioUnitEQ(numberOfBands: 2)
+            eq.bands[0].filterType = .highPass; eq.bands[0].frequency = 700; eq.bands[0].bypass = false
+            eq.bands[1].filterType = .lowPass; eq.bands[1].frequency = 4500; eq.bands[1].bypass = false
+            let dist = AVAudioUnitDistortion(); dist.loadFactoryPreset(.speechGoldenPi); dist.wetDryMix = 25
+            return [eq, dist]
+        case .underwater:
+            let eq = AVAudioUnitEQ(numberOfBands: 1)
+            eq.bands[0].filterType = .lowPass; eq.bands[0].frequency = 500; eq.bands[0].bypass = false
+            let d = AVAudioUnitDelay(); d.delayTime = 0.06; d.feedback = 35; d.wetDryMix = 25
+            return [eq, d]
+        case .bass:
+            let eq = AVAudioUnitEQ(numberOfBands: 1)
+            eq.bands[0].filterType = .lowShelf; eq.bands[0].frequency = 140; eq.bands[0].gain = 12; eq.bands[0].bypass = false
+            return [eq]
+        case .loud:
+            let eq = AVAudioUnitEQ(numberOfBands: 1)
+            eq.globalGain = 10
+            eq.bands[0].filterType = .parametric; eq.bands[0].frequency = 2500; eq.bands[0].bandwidth = 1; eq.bands[0].gain = 3
+            eq.bands[0].bypass = false
+            return [eq]
+        }
+    }
+
+    private static func renderOffline(input: URL, effect: AudioEffect, output: URL) throws {
+        let file = try AVAudioFile(forReading: input)
+        let format = file.processingFormat
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
+        let fx = nodes(for: effect)
+        fx.forEach { engine.attach($0) }
+        let chain: [AVAudioNode] = [player] + fx
+        for i in 0..<(chain.count - 1) { engine.connect(chain[i], to: chain[i + 1], format: format) }
+        engine.connect(chain[chain.count - 1], to: engine.mainMixerNode, format: format)
+
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try engine.start()
+        player.scheduleFile(file, at: nil)
+        player.play()
+
+        let outFile = try AVAudioFile(forWriting: output, settings: format.settings)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat,
+                                            frameCapacity: engine.manualRenderingMaximumFrameCount) else { return }
+        let total = file.length
+        var guardCounter = 0
+        while engine.manualRenderingSampleTime < total && guardCounter < 1_000_000 {
+            guardCounter += 1
+            let remaining = total - engine.manualRenderingSampleTime
+            let frames = AVAudioFrameCount(min(AVAudioFramePosition(buffer.frameCapacity), remaining))
+            let status = try engine.renderOffline(frames, to: buffer)
+            switch status {
+            case .success: try outFile.write(from: buffer)
+            case .cannotDoInCurrentContext: continue
+            default: guardCounter = Int.max / 2
+            }
+        }
+        player.stop()
+        engine.stop()
+    }
+
+    /// Обрабатывает звук файла эффектом. Результат кэшируется (имя = файл + эффект).
+    static func process(asset: AVAsset, effect: AudioEffect, completion: @escaping (AVAsset?) -> Void) {
+        guard effect != .none, let urlAsset = asset as? AVURLAsset,
+              asset.tracks(withMediaType: .audio).first != nil else { completion(nil); return }
+        let base = urlAsset.url.deletingPathExtension().lastPathComponent
+        let outURL = DraftStore.shared.mediaDir.appendingPathComponent("fx_\(base)_\(effect.rawValue).caf")
+        if FileManager.default.fileExists(atPath: outURL.path) {
+            completion(AVAsset(url: outURL))
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
+            var result: AVAsset?
+            if let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) {
+                export.outputURL = tmp
+                export.outputFileType = .m4a
+                let sem = DispatchSemaphore(value: 0)
+                export.exportAsynchronously { sem.signal() }
+                sem.wait()
+                if export.status == .completed {
+                    do {
+                        try renderOffline(input: tmp, effect: effect, output: outURL)
+                        result = AVAsset(url: outURL)
+                    } catch {
+                        try? FileManager.default.removeItem(at: outURL)
+                    }
+                }
+            }
+            try? FileManager.default.removeItem(at: tmp)
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+}
+
+// =====================================================================
+// MARK: - Speech dictation (наговорить текст)
+// =====================================================================
+
+final class SpeechDictation {
+    var onText: ((String) -> Void)?
+    var onStateChange: ((Bool) -> Void)?
+    var onError: ((String) -> Void)?
+
+    private let engine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private(set) var isRunning = false
+
+    private func makeRecognizer() -> SFSpeechRecognizer? {
+        if let r = SFSpeechRecognizer(locale: Locale.current), r.isAvailable { return r }
+        return SFSpeechRecognizer(locale: Locale(identifier: "ru-RU"))
+    }
+
+    func start() {
+        SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard status == .authorized else {
+                    self.onError?("Разрешите распознавание речи в настройках")
+                    return
+                }
+                AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                    DispatchQueue.main.async {
+                        guard granted else { self.onError?("Разрешите доступ к микрофону в настройках"); return }
+                        self.begin()
+                    }
+                }
+            }
+        }
+    }
+
+    private func begin() {
+        guard !isRunning, let recognizer = makeRecognizer() else {
+            onError?("Распознавание речи недоступно")
+            return
+        }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .duckOthers])
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+
+            let req = SFSpeechAudioBufferRecognitionRequest()
+            req.shouldReportPartialResults = true
+            request = req
+
+            let node = engine.inputNode
+            node.removeTap(onBus: 0)
+            node.installTap(onBus: 0, bufferSize: 1024, format: node.outputFormat(forBus: 0)) { buffer, _ in
+                req.append(buffer)
+            }
+            engine.prepare()
+            try engine.start()
+
+            task = recognizer.recognitionTask(with: req) { [weak self] result, error in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if let r = result { self.onText?(r.bestTranscription.formattedString) }
+                    if error != nil || result?.isFinal == true { self.stop() }
+                }
+            }
+            isRunning = true
+            onStateChange?(true)
+        } catch {
+            onError?("Не удалось включить микрофон")
+            stop()
+        }
+    }
+
+    func stop() {
+        guard isRunning || engine.isRunning else { return }
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        request?.endAudio()
+        task?.cancel()
+        request = nil
+        task = nil
+        isRunning = false
+        // Возвращаем звук воспроизведения (работает и в беззвучном режиме)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        onStateChange?(false)
     }
 }
 
@@ -3548,7 +4726,8 @@ final class TextInputView: UIView, UITextViewDelegate {
 
 final class ViewController: UIViewController {
 
-    private enum PanelKind { case speed, filter, transition, text, audio }
+    private enum PanelKind { case speed, filter, adjust, transition, animation, effects, frame, background, text, audio }
+    private enum PickerPurpose { case clips, bgPhoto, audioFromVideo }
 
     private enum TextTab: Int, CaseIterable {
         case text, styles, font, fill, stroke, shadow, shadowColor, glow, box, format, animIn, animOut
@@ -3570,7 +4749,7 @@ final class ViewController: UIViewController {
         }
     }
 
-    private struct Snapshot { var clips: [VideoClip]; var texts: [TextOverlay]; var audios: [AudioClip] }
+    private struct Snapshot { var clips: [VideoClip]; var texts: [TextOverlay]; var audios: [AudioClip]; var project: ProjectSettings }
 
     // UI
     private let topBar = UIView()
@@ -3597,6 +4776,9 @@ final class ViewController: UIViewController {
     private var clips: [VideoClip] = []
     private var texts: [TextOverlay] = []
     private var audios: [AudioClip] = []
+    private var project = ProjectSettings()
+    private var focusLane: TimelineLane = .video
+    private var pickerPurpose: PickerPurpose = .clips
     private var selectedClipIndex: Int?
     private var selectedTextID: UUID?
     private var selectedAudioID: UUID?
@@ -3618,7 +4800,15 @@ final class ViewController: UIViewController {
     private var transitionBoundary = 0
     private var transitionCategory: TransitionCategory = .all
     private var previewPairKey: String?
-    private var filterPreviews: [FilterType: UIImage] = [:]
+    private var filterPreviews: [Int: UIImage] = [:]
+    private var filterCategory: FilterCategory = .all
+    private var adjustTab = 0
+    private var hslChannel = 0
+    private var frameTab = 0
+    private var fxTab = 0
+    private var audioTab = 0
+    private var animTab = 0
+    private var processingKeys = Set<String>()
     private var filterPreviewClipID: UUID?
     private var textPreviewCache: [String: UIImage] = [:]
 
@@ -3636,6 +4826,9 @@ final class ViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Звук должен играть даже при беззвучном режиме
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
+        try? AVAudioSession.sharedInstance().setActive(true)
         setupLayout()
         setupPlayer()
         setupCallbacks()
@@ -3857,6 +5050,7 @@ final class ViewController: UIViewController {
         timelineView.onSelectText = { [weak self] id in self?.selectText(id) }
         timelineView.onSelectAudio = { [weak self] id in self?.selectAudio(id) }
         timelineView.onDeselectAll = { [weak self] in self?.deselectAll() }
+        timelineView.onFocusLane = { [weak self] lane in self?.setFocus(lane) }
         timelineView.onTapAdd = { [weak self] in self?.didTapAddVideo() }
         timelineView.onTapTransition = { [weak self] j in
             guard let self = self else { return }
@@ -3875,14 +5069,21 @@ final class ViewController: UIViewController {
         panel.onSelect = { [weak self] index in self?.handlePanelSelect(index) }
         panel.onChip = { [weak self] index in
             guard let self = self else { return }
-            if self.activePanel == .transition {
-                self.transitionCategory = TransitionCategory.allCases[index]
-            } else if self.activePanel == .text, let tab = TextTab(rawValue: index) {
-                self.textTab = tab
+            switch self.activePanel {
+            case .transition?: self.transitionCategory = TransitionCategory.allCases[index]
+            case .text?: if let tab = TextTab(rawValue: index) { self.textTab = tab }
+            case .filter?: self.filterCategory = FilterCategory.allCases[index]
+            case .adjust?: self.adjustTab = index
+            case .frame?: self.frameTab = index
+            case .effects?: self.fxTab = index
+            case .audio?: self.audioTab = index
+            case .animation?: self.animTab = index
+            default: break
             }
             self.refreshActivePanel(keepScroll: false)
         }
-        panel.onExtra = { [weak self] in self?.applyTransitionToAll() }
+        panel.onExtra = { [weak self] in self?.handlePanelExtra() }
+        panel.onFavorite = { [weak self] index in self?.toggleFavorite(index) }
         panel.onSliderBegan = { [weak self] in self?.sliderBegan() }
         panel.onSliderChanged = { [weak self] v in self?.sliderChanged(v) }
         panel.onSliderEnded = { [weak self] v in self?.sliderEnded(v) }
@@ -4037,7 +5238,7 @@ final class ViewController: UIViewController {
             return
         }
 
-        guard let b = EditorBuild.make(clips: clips, audios: audios) else {
+        guard let b = EditorBuild.make(clips: clips, audios: audios, project: project) else {
             showToast("Не удалось собрать видео")
             return
         }
@@ -4045,7 +5246,7 @@ final class ViewController: UIViewController {
         renderSize = b.renderSize
 
         let item = AVPlayerItem(asset: b.composition)
-        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts)
+        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, project: project)
         item.audioMix = b.audioMix
         item.audioTimePitchAlgorithm = .spectral
         player.pause()
@@ -4058,12 +5259,13 @@ final class ViewController: UIViewController {
         reloadTimeline()
         timelineView.setPlayhead(time: t.secs, force: true)
         updateTextBox()
+        ensureProcessedAudio()
     }
 
     /// Лёгкое обновление (фильтры, текст): композиция та же, меняем только инструкции.
     private func refreshVideoComposition() {
         guard let b = build, let item = player.currentItem else { return }
-        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts)
+        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, project: project)
         if player.rate == 0 { seekTo(ticks(displayTime)) }
     }
 
@@ -4074,7 +5276,8 @@ final class ViewController: UIViewController {
                             audios: audios,
                             selectedClip: selectedClipIndex,
                             selectedText: selectedTextID,
-                            selectedAudio: selectedAudioID)
+                            selectedAudio: selectedAudioID,
+                            focus: focusLane)
     }
 
     /// Миниатюры и волны догружаются в фоне — не трогаем ленту, пока человек её крутит.
@@ -4093,7 +5296,7 @@ final class ViewController: UIViewController {
     // MARK: Undo
 
     private func pushUndo() {
-        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios))
+        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, project: project))
         if undoStack.count > 50 { undoStack.removeFirst() }
         updateUndoButton()
     }
@@ -4107,6 +5310,7 @@ final class ViewController: UIViewController {
         clips = s.clips
         texts = s.texts
         audios = s.audios
+        project = s.project
         clearSelection()
         filterPreviewClipID = nil
         rebuild()
@@ -4129,6 +5333,7 @@ final class ViewController: UIViewController {
 
     private func selectClip(_ index: Int) {
         clearSelection()
+        focusLane = .video
         selectedClipIndex = index
         if clips.count > 1 { transitionBoundary = min(index, clips.count - 2) }
         reloadTimeline()
@@ -4139,6 +5344,7 @@ final class ViewController: UIViewController {
     private func selectText(_ id: UUID) {
         guard let o = texts.first(where: { $0.id == id }) else { return }
         clearSelection()
+        focusLane = .text
         selectedTextID = id
         if displayTime < o.start || displayTime >= o.start + o.duration {
             let s = min(o.start + 0.01, totalSeconds)
@@ -4154,7 +5360,22 @@ final class ViewController: UIViewController {
     private func selectAudio(_ id: UUID) {
         guard audios.contains(where: { $0.id == id }) else { return }
         clearSelection()
+        focusLane = .audio
         selectedAudioID = id
+        reloadTimeline()
+        updateTextBox()
+        refreshActivePanel()
+    }
+
+    private func setFocus(_ lane: TimelineLane) {
+        let keepSelection: Bool
+        switch lane {
+        case .video: keepSelection = selectedClipIndex != nil
+        case .text: keepSelection = selectedTextID != nil
+        case .audio: keepSelection = selectedAudioID != nil
+        }
+        if !keepSelection { clearSelection() }
+        focusLane = lane
         reloadTimeline()
         updateTextBox()
         refreshActivePanel()
@@ -4174,33 +5395,59 @@ final class ViewController: UIViewController {
             reloadTimeline()
         }
     }
-
     // MARK: Tools
+
+    private func requireClips() -> Bool {
+        if clips.isEmpty { showToast("Сначала добавьте видео") }
+        return !clips.isEmpty
+    }
 
     private func handleTool(_ tool: EditorTool) {
         switch tool {
-        case .addVideo: didTapAddVideo()
+        case .addVideo:
+            pickerPurpose = .clips
+            didTapAddVideo()
         case .split: splitAtPlayhead()
         case .delete: deleteCurrent()
         case .duplicate: duplicateCurrent()
         case .speed: openClipPanel(.speed)
         case .filter: openClipPanel(.filter)
+        case .adjust: openClipPanel(.adjust)
         case .transition: openTransitionPanel()
+        case .animation:
+            guard requireClips() else { return }
+            openPanel(.animation)
+        case .effects: openClipPanel(.effects)
+        case .frame:
+            guard requireClips() else { return }
+            openPanel(.frame)
+        case .background: openClipPanel(.background)
         case .text:
-            guard !clips.isEmpty else { showToast("Сначала добавьте видео"); return }
+            guard requireClips() else { return }
+            focusLane = .text
+            reloadTimeline()
             textTab = .text
             openPanel(.text)
             if texts.isEmpty { presentTextInput(editing: nil) }
         case .audio:
-            guard !clips.isEmpty else { showToast("Сначала добавьте видео"); return }
+            guard requireClips() else { return }
+            focusLane = .audio
+            reloadTimeline()
+            audioTab = 0
             openPanel(.audio)
         }
     }
 
     private func openClipPanel(_ kind: PanelKind) {
-        guard !clips.isEmpty else { showToast("Сначала добавьте видео"); return }
-        ensureSelection()
-        if selectedClipIndex == nil, let i = currentClipIndex() { selectedClipIndex = i; reloadTimeline() }
+        guard requireClips() else { return }
+        if selectedClipIndex == nil {
+            let i = currentClipIndex()
+            clearSelection()
+            selectedClipIndex = i
+        }
+        focusLane = .video
+        if let i = selectedClipIndex, clips.count > 1 { transitionBoundary = min(i, clips.count - 2) }
+        reloadTimeline()
         openPanel(kind)
     }
 
@@ -4218,15 +5465,77 @@ final class ViewController: UIViewController {
         if let s = selectedClipIndex { bestJ = min(s, clips.count - 2) }
         transitionBoundary = bestJ
         clearSelection()
+        focusLane = .video
         selectedClipIndex = bestJ
         reloadTimeline()
         openPanel(.transition)
     }
 
-    // MARK: Split / delete / duplicate
+    // MARK: Split / delete / duplicate (работают с той дорожкой, на которой фокус)
 
     private func splitAtPlayhead() {
-        guard let b = build, !clips.isEmpty else { showToast("Сначала добавьте видео"); return }
+        guard requireClips() else { return }
+        switch focusLane {
+        case .video: splitVideo()
+        case .text: splitText()
+        case .audio: splitAudio()
+        }
+    }
+
+    private func textIndexAtPlayhead() -> Int? {
+        let t = displayTime
+        if let id = selectedTextID, let i = texts.firstIndex(where: { $0.id == id }),
+           t > texts[i].start, t < texts[i].start + texts[i].duration { return i }
+        return texts.lastIndex { t > $0.start && t < $0.start + $0.duration }
+    }
+
+    private func audioIndexAtPlayhead() -> Int? {
+        let t = displayTime
+        if let id = selectedAudioID, let i = audios.firstIndex(where: { $0.id == id }),
+           t > audios[i].start, t < audios[i].start + audios[i].duration { return i }
+        return audios.lastIndex { t > $0.start && t < $0.start + $0.duration }
+    }
+
+    private func splitText() {
+        let t = displayTime
+        guard let i = textIndexAtPlayhead(), t - texts[i].start > 0.2, texts[i].start + texts[i].duration - t > 0.2 else {
+            showToast("Поставьте красную палку внутрь текста на дорожке текста")
+            return
+        }
+        pushUndo()
+        let o = texts[i]
+        var second = o
+        second.id = UUID()
+        second.start = t
+        second.duration = o.start + o.duration - t
+        texts[i].duration = t - o.start
+        texts.append(second)
+        textsChanged()
+    }
+
+    private func splitAudio() {
+        let t = displayTime
+        guard let i = audioIndexAtPlayhead(), t - audios[i].start > 0.2, audios[i].start + audios[i].duration - t > 0.2 else {
+            showToast("Поставьте красную палку внутрь аудио на дорожке аудио")
+            return
+        }
+        pushUndo()
+        let a = audios[i]
+        var second = a
+        second.id = UUID()
+        second.start = t
+        second.sourceOffset = a.sourceOffset + (t - a.start)
+        second.duration = a.start + a.duration - t
+        second.fadeIn = 0
+        audios[i].duration = t - a.start
+        audios[i].fadeOut = 0
+        audios.append(second)
+        rebuild()
+        refreshActivePanel()
+    }
+
+    private func splitVideo() {
+        guard let b = build else { return }
         let t = displayTime
 
         var idx: Int?
@@ -4252,11 +5561,13 @@ final class ViewController: UIViewController {
         var first = clip
         first.sourceRange = CMTimeRange(start: clip.sourceRange.start, duration: srcOffset)
         first.transitionID = 0
+        first.fadeOut = 0
 
-        var second = clip   // у второй половины свой id → свои независимые фильтр/переход/скорость
+        var second = clip   // у второй половины свой id → свои независимые фильтр/переход/скорость/звук
         second.id = UUID()
         second.sourceRange = CMTimeRange(start: clip.sourceRange.start + srcOffset,
                                          duration: clip.sourceRange.duration - srcOffset)
+        second.fadeIn = 0
 
         clips[i] = first
         clips.insert(second, at: i + 1)
@@ -4281,25 +5592,69 @@ final class ViewController: UIViewController {
             refreshActivePanel()
             return
         }
-        guard let i = currentClipIndex() else { showToast("Нечего удалять"); return }
-        pushUndo()
-        clips.remove(at: i)
-        clearSelection()
-        filterPreviewClipID = nil
-        rebuild()
-        refreshActivePanel()
+        switch focusLane {
+        case .text:
+            guard let i = textIndexAtPlayhead() else { showToast("Выберите текст на дорожке"); return }
+            pushUndo()
+            texts.remove(at: i)
+            textsChanged()
+        case .audio:
+            guard let i = audioIndexAtPlayhead() else { showToast("Выберите аудио на дорожке"); return }
+            pushUndo()
+            audios.remove(at: i)
+            rebuild()
+            refreshActivePanel()
+        case .video:
+            guard let i = currentClipIndex() else { showToast("Нечего удалять"); return }
+            pushUndo()
+            clips.remove(at: i)
+            clearSelection()
+            filterPreviewClipID = nil
+            rebuild()
+            refreshActivePanel()
+        }
     }
 
     private func duplicateCurrent() {
-        guard let i = currentClipIndex() else { showToast("Сначала добавьте видео"); return }
-        pushUndo()
-        var copy = clips[i]
-        copy.id = UUID()
-        copy.transitionID = 0
-        clips.insert(copy, at: i + 1)
-        clearSelection()
-        selectedClipIndex = i + 1
-        rebuild()
+        switch focusLane {
+        case .text:
+            guard let i = selectedTextID.flatMap({ id in texts.firstIndex { $0.id == id } }) ?? textIndexAtPlayhead() else {
+                showToast("Выберите текст на дорожке"); return
+            }
+            pushUndo()
+            var copy = texts[i]
+            copy.id = UUID()
+            copy.position.y = min(0.95, copy.position.y + 0.08)
+            texts.append(copy)
+            clearSelection()
+            selectedTextID = copy.id
+            textsChanged()
+        case .audio:
+            guard let i = selectedAudioID.flatMap({ id in audios.firstIndex { $0.id == id } }) ?? audioIndexAtPlayhead() else {
+                showToast("Выберите аудио на дорожке"); return
+            }
+            let a = audios[i]
+            guard a.start + a.duration + 0.3 < totalSeconds else { showToast("Нет места после аудио"); return }
+            pushUndo()
+            var copy = a
+            copy.id = UUID()
+            copy.start = a.start + a.duration
+            copy.duration = min(a.duration, totalSeconds - copy.start)
+            audios.append(copy)
+            clearSelection()
+            selectedAudioID = copy.id
+            rebuild()
+        case .video:
+            guard let i = currentClipIndex() else { showToast("Сначала добавьте видео"); return }
+            pushUndo()
+            var copy = clips[i]
+            copy.id = UUID()
+            copy.transitionID = 0
+            clips.insert(copy, at: i + 1)
+            clearSelection()
+            selectedClipIndex = i + 1
+            rebuild()
+        }
     }
 
     // MARK: Timeline commits (перетаскивание / обрезка за края)
@@ -4362,105 +5717,50 @@ final class ViewController: UIViewController {
 
     private func refreshActivePanel(keepScroll: Bool = true) {
         guard let kind = activePanel else { return }
-
         switch kind {
-        case .speed:
-            guard let i = currentClipIndex() else { closePanel(); return }
-            let items = speeds.map { PanelItem(title: $0 == 1 ? "Обычная" : "\($0)x", badge: String(format: "%gx", Double($0))) }
-            let sel = speeds.firstIndex { abs($0 - clips[i].speed) < 0.01 }
-            panel.configure(title: "Скорость · клип \(i + 1)", items: items, selected: sel, slider: nil, keepScroll: keepScroll)
-
-        case .filter:
-            guard let i = currentClipIndex() else { closePanel(); return }
-            let items = FilterType.allCases.map {
-                PanelItem(title: $0.displayName, symbol: filterPreviews[$0] == nil ? "camera.filters" : nil, image: filterPreviews[$0])
-            }
-            let sel = FilterType.allCases.firstIndex(of: clips[i].filter)
-            let cfg = SliderConfig(title: "Сила", min: 0, max: 1, value: clips[i].filterIntensity) { "\(Int($0 * 100))%" }
-            panel.configure(title: "Фильтр · клип \(i + 1)", items: items, selected: sel,
-                            slider: clips[i].filter == .none ? nil : cfg, keepScroll: keepScroll)
-
-        case .transition:
-            guard clips.count >= 2 else { closePanel(); return }
-            let j = min(transitionBoundary, clips.count - 2)
-            transitionBoundary = j
-            updateTransitionPreviewFrames()
-            let list = TransitionCatalog.list(transitionCategory)
-            var items = [PanelItem(title: "Нет", symbol: "xmark"), PanelItem(title: "Случайный", symbol: "shuffle")]
-            items += list.map { PanelItem(title: $0.name, symbol: $0.category.symbol, previewKey: "t\($0.id)") }
-            let curID = clips[j].transitionID
-            let sel: Int? = curID == 0 ? 0 : list.firstIndex(where: { $0.id == curID }).map { $0 + 2 }
-            let cfg = SliderConfig(title: "Длительность", min: 0.2, max: 1.5, value: Float(clips[j].transitionDuration)) {
-                String(format: "%.1fс", Double($0))
-            }
-            let curName = TransitionCatalog.spec(curID)?.name ?? "нет"
-            panel.configure(title: "\(j + 1)→\(j + 2) · \(curName)", items: items, selected: sel,
-                            slider: curID == 0 ? nil : cfg,
-                            chips: TransitionCategory.allCases.map { "\($0.title) \(TransitionCatalog.list($0).count)" },
-                            selectedChip: transitionCategory.rawValue,
-                            extra: curID == 0 ? nil : "Ко всем", keepScroll: keepScroll)
-
-        case .text:
-            refreshTextPanel(keepScroll: keepScroll)
-
-        case .audio:
-            let muted = (currentClipIndex().map { clips[$0].volume == 0 }) ?? false
-            let items = [
-                PanelItem(title: "Добавить аудио", symbol: "music.note"),
-                PanelItem(title: "Удалить аудио", symbol: "trash"),
-                PanelItem(title: muted ? "Включить звук видео" : "Выкл. звук видео",
-                          symbol: muted ? "speaker.wave.2.fill" : "speaker.slash.fill")
-            ]
-            var cfg: SliderConfig?
-            if let a = selectedAudio {
-                cfg = SliderConfig(title: "Громкость", min: 0, max: 1, value: a.volume) { "\(Int($0 * 100))%" }
-            }
-            let title = selectedAudio.map { "Аудио · \($0.title)" } ?? "Звук · выберите аудио на дорожке"
-            panel.configure(title: title, items: items, selected: nil, slider: cfg, keepScroll: keepScroll)
+        case .speed: refreshSpeedPanel(keepScroll)
+        case .filter: refreshFilterPanel(keepScroll)
+        case .adjust: refreshAdjustPanel(keepScroll)
+        case .transition: refreshTransitionPanel(keepScroll)
+        case .animation: refreshAnimationPanel(keepScroll)
+        case .effects: refreshEffectsPanel(keepScroll)
+        case .frame: refreshFramePanel(keepScroll)
+        case .background: refreshBackgroundPanel(keepScroll)
+        case .text: refreshTextPanel(keepScroll: keepScroll)
+        case .audio: refreshAudioPanel(keepScroll)
         }
-        setBottomHeight(panel.preferredHeight)
+        if activePanel != nil { setBottomHeight(panel.preferredHeight) }
     }
 
-    private func handlePanelSelect(_ index: Int) {
-        guard let kind = activePanel else { return }
-        switch kind {
-        case .speed:
-            guard let i = currentClipIndex(), index < speeds.count else { return }
-            pushUndo()
-            clips[i].speed = speeds[index]
-            rebuild()
-            refreshActivePanel()
+    // MARK: Speed
 
-        case .filter:
-            guard let i = currentClipIndex() else { return }
-            pushUndo()
-            clips[i].filter = FilterType.allCases[index]
-            refreshVideoComposition()   // только этот клип — у остальных фильтры не трогаем
-            reloadTimeline()
-            refreshActivePanel()
+    private let speedPresets: [Float] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8]
 
-        case .transition:
-            guard clips.count >= 2 else { return }
-            let j = min(transitionBoundary, clips.count - 2)
-            pushUndo()
-            let list = TransitionCatalog.list(transitionCategory)
-            if index == 0 {
-                clips[j].transitionID = 0
-            } else if index == 1 {
-                clips[j].transitionID = list.randomElement()?.id ?? 0
-            } else if index - 2 < list.count {
-                clips[j].transitionID = list[index - 2].id
-            }
-            rebuild()
-            refreshActivePanel()
-            previewTransition(j)
+    private func refreshSpeedPanel(_ keep: Bool) {
+        guard let i = currentClipIndex() else { closePanel(); return }
+        let items = speedPresets.map { PanelItem(title: $0 == 1 ? "Обычная" : "\($0)x", badge: String(format: "%gx", Double($0))) }
+        let sel = speedPresets.firstIndex { abs($0 - clips[i].speed) < 0.001 }
+        let cfg = SliderConfig(title: "Скорость", min: 0.1, max: 8, value: clips[i].speed) { String(format: "%.2fx", Double($0)) }
+        panel.configure(title: "Скорость · клип \(i + 1)", items: items, selected: sel, slider: cfg, keepScroll: keep)
+    }
 
-        case .text:
-            handleTextPanel(index)
+    // MARK: Filters
 
-        case .audio:
-            handleAudioPanel(index)
+    private func refreshFilterPanel(_ keep: Bool) {
+        guard let i = currentClipIndex() else { closePanel(); return }
+        let ids = FilterCatalog.ids(for: filterCategory)
+        var items = [PanelItem(title: "Оригинал", symbol: filterPreviews[0] == nil ? "camera.filters" : nil, image: filterPreviews[0])]
+        for id in ids {
+            let name = FilterCatalog.preset(id)?.name ?? ""
+            items.append(PanelItem(title: name, symbol: filterPreviews[id] == nil ? "camera.filters" : nil, image: filterPreviews[id]))
         }
+        let cur = clips[i].filterID
+        let sel: Int? = cur == 0 ? 0 : ids.firstIndex(of: cur).map { $0 + 1 }
+        let cfg = SliderConfig(title: "Сила", min: 0, max: 1, value: clips[i].filterIntensity) { "\(Int($0 * 100))%" }
+        panel.configure(title: "Фильтр · клип \(i + 1)", items: items, selected: sel,
+                        slider: cur == 0 ? nil : cfg,
+                        chips: FilterCategory.allCases.map { $0.title }, selectedChip: filterCategory.rawValue,
+                        keepScroll: keep)
     }
 
     private func updateFilterPreviews() {
@@ -4477,17 +5777,130 @@ final class ViewController: UIViewController {
             let mid = clip.sourceRange.start + CMTimeMultiplyByFloat64(clip.sourceRange.duration, multiplier: 0.5)
             guard let cg = try? gen.copyCGImage(at: mid, actualTime: nil) else { return }
             let base = CIImage(cgImage: cg)
-            var result: [FilterType: UIImage] = [:]
-            for f in FilterType.allCases {
-                let out = f.apply(to: base)
+            var result: [Int: UIImage] = [:]
+            for id in 0...FilterCatalog.all.count {
+                let out = id == 0 ? base : (FilterCatalog.preset(id)?.adjust.apply(to: base) ?? base)
                 if let o = EditorCompositor.ciContext.createCGImage(out, from: base.extent) {
-                    result[f] = UIImage(cgImage: o)
+                    result[id] = UIImage(cgImage: o)
                 }
             }
             DispatchQueue.main.async {
                 self?.filterPreviews = result
                 if self?.activePanel == .filter { self?.refreshActivePanel() }
             }
+        }
+    }
+
+    // MARK: Custom color adjustments
+
+    private typealias AdjustDef = (title: String, path: WritableKeyPath<Adjustments, Double>?, min: Double, max: Double)
+
+    private static let adjustDefs: [AdjustDef] = [
+        ("Яркость", \Adjustments.brightness, -1, 1), ("Контраст", \Adjustments.contrast, -1, 1),
+        ("Насыщ.", \Adjustments.saturation, -1, 1), ("Сочность", \Adjustments.vibrance, -1, 1),
+        ("Тепло", \Adjustments.warmth, -1, 1), ("Оттенок", \Adjustments.tint, -1, 1),
+        ("Света", \Adjustments.highlights, -1, 1), ("Тени", \Adjustments.shadows, -1, 1),
+        ("Кривая тени", \Adjustments.curveShadows, -1, 1), ("Кривая средн.", \Adjustments.curveMid, -1, 1),
+        ("Кривая света", \Adjustments.curveHigh, -1, 1), ("Цвет", \Adjustments.hue, -1, 1),
+        ("Матовость", \Adjustments.fade, 0, 1), ("Резкость", \Adjustments.sharpen, 0, 1),
+        ("Виньетка", \Adjustments.vignette, 0, 1), ("Шум", \Adjustments.grain, 0, 1),
+        ("Ретушь", \Adjustments.retouch, 0, 1), ("Свечение", \Adjustments.glow, 0, 1),
+        ("Размытие", \Adjustments.blur, 0, 1),
+        ("Тон теней", \Adjustments.shadowTone, 0, 1), ("Сила теней", \Adjustments.shadowToneAmount, 0, 1),
+        ("Тон светов", \Adjustments.highTone, 0, 1), ("Сила светов", \Adjustments.highToneAmount, 0, 1),
+        ("HSL оттенок", nil, -1, 1), ("HSL насыщ.", nil, -1, 1), ("HSL яркость", nil, -1, 1)
+    ]
+    private static let hslFirstTab = 23
+
+    private func adjustValue(_ a: Adjustments) -> Double {
+        let def = ViewController.adjustDefs[adjustTab]
+        if let p = def.path { return a[keyPath: p] }
+        return a.hsl[hslChannel * 3 + (adjustTab - ViewController.hslFirstTab)]
+    }
+
+    private func setAdjustValue(_ v: Double, _ a: inout Adjustments) {
+        let def = ViewController.adjustDefs[adjustTab]
+        if let p = def.path { a[keyPath: p] = v } else { a.hsl[hslChannel * 3 + (adjustTab - ViewController.hslFirstTab)] = v }
+    }
+
+    private func refreshAdjustPanel(_ keep: Bool) {
+        guard let i = currentClipIndex() else { closePanel(); return }
+        adjustTab = max(0, min(adjustTab, ViewController.adjustDefs.count - 1))
+        let def = ViewController.adjustDefs[adjustTab]
+        var items: [PanelItem] = []
+        var sel: Int?
+        if def.path == nil {
+            for k in 0..<8 { items.append(PanelItem(title: HSLChannel.titles[k], swatch: HSLChannel.colors[k])) }
+            items.append(PanelItem(title: "Сбросить", symbol: "arrow.counterclockwise"))
+            sel = hslChannel
+        } else {
+            items = [PanelItem(title: "Сбросить это", symbol: "arrow.counterclockwise"),
+                     PanelItem(title: "Сбросить всё", symbol: "xmark")]
+        }
+        let value = adjustValue(clips[i].adjust)
+        let cfg = SliderConfig(title: def.title, min: Float(def.min), max: Float(def.max), value: Float(value)) {
+            def.min < 0 ? String(format: "%+.0f", Double($0) * 100) : String(format: "%.0f", Double($0) * 100)
+        }
+        panel.configure(title: "Цвет · клип \(i + 1)", items: items, selected: sel, slider: cfg,
+                        chips: ViewController.adjustDefs.map { $0.title }, selectedChip: adjustTab, keepScroll: keep)
+    }
+
+    private func handleAdjustSelect(_ index: Int) {
+        guard let i = currentClipIndex() else { return }
+        let isHSL = ViewController.adjustDefs[adjustTab].path == nil
+        if isHSL {
+            if index < 8 { hslChannel = index; refreshActivePanel() ; return }
+            pushUndo()
+            clips[i].adjust.hsl = Array(repeating: 0, count: 24)
+        } else {
+            pushUndo()
+            if index == 0 { var a = clips[i].adjust; setAdjustValue(0, &a); clips[i].adjust = a }
+            else { clips[i].adjust = Adjustments() }
+        }
+        refreshVideoComposition()
+        reloadTimeline()
+        refreshActivePanel()
+    }
+
+    // MARK: Transitions
+
+    private func refreshTransitionPanel(_ keep: Bool) {
+        guard clips.count >= 2 else { closePanel(); return }
+        let j = min(transitionBoundary, clips.count - 2)
+        transitionBoundary = j
+        updateTransitionPreviewFrames()
+        let list = TransitionCatalog.list(transitionCategory)
+        var items = [PanelItem(title: "Нет", symbol: "xmark"), PanelItem(title: "Случайный", symbol: "shuffle")]
+        items += list.map {
+            PanelItem(title: $0.name, symbol: $0.category.symbol, previewKey: "t\($0.id)", favorite: TransitionFavorites.contains($0.id))
+        }
+        let curID = clips[j].transitionID
+        let sel: Int? = curID == 0 ? 0 : list.firstIndex(where: { $0.id == curID }).map { $0 + 2 }
+        let cfg = SliderConfig(title: "Длительность", min: 0.2, max: 1.5, value: Float(clips[j].transitionDuration)) {
+            String(format: "%.1fс", Double($0))
+        }
+        let curName = TransitionCatalog.spec(curID)?.name ?? "нет"
+        panel.configure(title: "\(j + 1)→\(j + 2) · \(curName)", items: items, selected: sel,
+                        slider: curID == 0 ? nil : cfg,
+                        chips: TransitionCategory.allCases.map { "\($0.title) \(TransitionCatalog.list($0).count)" },
+                        selectedChip: transitionCategory.rawValue,
+                        extra: curID == 0 ? nil : "Ко всем", keepScroll: keep)
+    }
+
+    private func toggleFavorite(_ index: Int) {
+        guard activePanel == .transition, index >= 2 else { return }
+        let list = TransitionCatalog.list(transitionCategory)
+        guard index - 2 < list.count else { return }
+        let nowFav = TransitionFavorites.toggle(list[index - 2].id)
+        showToast(nowFav ? "Добавлено в избранное ♥" : "Убрано из избранного")
+        refreshActivePanel()
+    }
+
+    private func handlePanelExtra() {
+        switch activePanel {
+        case .transition?: applyTransitionToAll()
+        case .background?: applyBackgroundToAll()
+        default: break
         }
     }
 
@@ -4521,13 +5934,468 @@ final class ViewController: UIViewController {
         }
     }
 
+    // MARK: Intro / outro animation
+
+    private func refreshAnimationPanel(_ keep: Bool) {
+        let isIntro = animTab == 0
+        let cur = isIntro ? project.introID : project.outroID
+        var items = [PanelItem(title: "Нет", symbol: "xmark")]
+        items += TransitionCatalog.all.map { PanelItem(title: $0.name, symbol: $0.category.symbol) }
+        let dur = isIntro ? project.introDuration : project.outroDuration
+        let cfg = SliderConfig(title: "Длительность", min: 0.2, max: 2.5, value: Float(dur)) { String(format: "%.1fс", Double($0)) }
+        panel.configure(title: isIntro ? "Появление видео в начале" : "Затухание видео в конце",
+                        items: items, selected: cur, slider: cur == 0 ? nil : cfg,
+                        chips: ["Начало видео", "Конец видео"], selectedChip: animTab, keepScroll: keep)
+    }
+
+    private func handleAnimationSelect(_ index: Int) {
+        pushUndo()
+        if animTab == 0 { project.introID = index } else { project.outroID = index }
+        refreshVideoComposition()
+        refreshActivePanel()
+        let total = totalSeconds
+        if animTab == 0 {
+            playRange(from: 0, until: project.introDuration + 0.6)
+        } else {
+            playRange(from: max(0, total - project.outroDuration - 0.8), until: total)
+        }
+    }
+
+    // MARK: Effects (отражение, поворот, зум, реверс, заморозка)
+
+    private func refreshEffectsPanel(_ keep: Bool) {
+        guard let i = currentClipIndex() else { closePanel(); return }
+        let c = clips[i]
+        var items: [PanelItem] = []
+        var sel: Int?
+        var cfg: SliderConfig?
+        switch fxTab {
+        case 0:
+            items = [
+                PanelItem(title: "Отразить ↔", symbol: "arrow.left.and.right", on: c.flipH),
+                PanelItem(title: "Отразить ↕", symbol: "arrow.up.and.down", on: c.flipV),
+                PanelItem(title: "Влево 90°", symbol: "rotate.left"),
+                PanelItem(title: "Вправо 90°", symbol: "rotate.right"),
+                PanelItem(title: "Сбросить", symbol: "arrow.counterclockwise")
+            ]
+        case 1:
+            items = [PanelItem(title: "Сбросить угол", symbol: "arrow.counterclockwise")]
+            cfg = SliderConfig(title: "Угол", min: -180, max: 180, value: Float(c.rotation)) { String(format: "%.0f°", Double($0)) }
+        case 2:
+            items = [PanelItem(title: "Сбросить", symbol: "arrow.counterclockwise")]
+            cfg = SliderConfig(title: "Масштаб", min: 0.5, max: 3, value: Float(c.zoom)) { String(format: "%.2fx", Double($0)) }
+        case 3:
+            items = VideoLook.allCases.map { PanelItem(title: $0.title, symbol: $0.symbol) }
+            sel = c.look
+        default:
+            items = [
+                PanelItem(title: "Реверс", symbol: "backward.fill"),
+                PanelItem(title: "Заморозка 2с", symbol: "snowflake"),
+                PanelItem(title: "Заморозка 4с", symbol: "snowflake")
+            ]
+        }
+        panel.configure(title: "Эффекты · клип \(i + 1)", items: items, selected: sel, slider: cfg,
+                        chips: ["Поворот", "Угол", "Масштаб", "Эффекты", "Время"], selectedChip: fxTab, keepScroll: keep)
+    }
+
+    private func mutateClip(_ f: (inout VideoClip) -> Void) {
+        guard let i = currentClipIndex() else { return }
+        pushUndo()
+        f(&clips[i])
+        refreshVideoComposition()
+        reloadTimeline()
+        refreshActivePanel()
+    }
+
+    private func handleEffectsSelect(_ index: Int) {
+        switch fxTab {
+        case 0:
+            switch index {
+            case 0: mutateClip { $0.flipH.toggle() }
+            case 1: mutateClip { $0.flipV.toggle() }
+            case 2: mutateClip { $0.rotation = ViewController.normalizeAngle($0.rotation - 90) }
+            case 3: mutateClip { $0.rotation = ViewController.normalizeAngle($0.rotation + 90) }
+            default: mutateClip { $0.flipH = false; $0.flipV = false; $0.rotation = 0; $0.zoom = 1 }
+            }
+        case 1: mutateClip { $0.rotation = 0 }
+        case 2: mutateClip { $0.zoom = 1 }
+        case 3: mutateClip { $0.look = index }
+        default:
+            switch index {
+            case 0: reverseCurrentClip()
+            case 1: freezeFrame(seconds: 2)
+            default: freezeFrame(seconds: 4)
+            }
+        }
+    }
+
+    private static func normalizeAngle(_ a: Double) -> Double {
+        var x = a.truncatingRemainder(dividingBy: 360)
+        if x > 180 { x -= 360 }
+        if x <= -180 { x += 360 }
+        return x
+    }
+
+    // MARK: Frame (формат кадра)
+
+    private func refreshFramePanel(_ keep: Bool) {
+        var items: [PanelItem] = []
+        var sel: Int?
+        if frameTab == 0 {
+            for p in AspectPresets.all { items.append(PanelItem(title: p.title, badge: p.title)) }
+            items.append(PanelItem(title: project.customActive ? "Свой \(Int(project.customW)):\(Int(project.customH))" : "Свой…", symbol: "pencil"))
+            sel = project.customActive ? AspectPresets.all.count : project.aspectIndex
+        } else {
+            items = [
+                PanelItem(title: "Вписать", symbol: "arrow.down.right.and.arrow.up.left", on: project.fillMode == 0),
+                PanelItem(title: "Заполнить (обрезка)", symbol: "arrow.up.left.and.arrow.down.right", on: project.fillMode == 1),
+                PanelItem(title: "Размытый фон", symbol: "drop", on: project.blurBackground)
+            ]
+        }
+        panel.configure(title: "Формат кадра", items: items, selected: sel, slider: nil,
+                        chips: ["Формат", "Заполнение"], selectedChip: frameTab, keepScroll: keep)
+    }
+
+    private func handleFrameSelect(_ index: Int) {
+        pushUndo()
+        if frameTab == 0 {
+            if index == AspectPresets.all.count {
+                undoStack.removeLast()
+                updateUndoButton()
+                promptCustomRatio()
+                return
+            }
+            project.aspectIndex = index
+            project.customW = 0
+            project.customH = 0
+            rebuild()
+        } else {
+            switch index {
+            case 0: project.fillMode = 0
+            case 1: project.fillMode = 1
+            default: project.blurBackground.toggle()
+            }
+            refreshVideoComposition()
+        }
+        refreshActivePanel()
+    }
+
+    private func promptCustomRatio() {
+        let alert = UIAlertController(title: "Свой формат", message: "Соотношение сторон: ширина и высота", preferredStyle: .alert)
+        alert.addTextField { $0.placeholder = "Ширина (например 5)"; $0.keyboardType = .decimalPad; $0.text = self.project.customActive ? "\(self.project.customW)" : nil }
+        alert.addTextField { $0.placeholder = "Высота (например 7)"; $0.keyboardType = .decimalPad; $0.text = self.project.customActive ? "\(self.project.customH)" : nil }
+        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Применить", style: .default) { [weak self, weak alert] _ in
+            guard let self = self, let f = alert?.textFields else { return }
+            let w = Double((f[0].text ?? "").replacingOccurrences(of: ",", with: ".")) ?? 0
+            let h = Double((f[1].text ?? "").replacingOccurrences(of: ",", with: ".")) ?? 0
+            guard w > 0.1, h > 0.1, w / h < 10, h / w < 10 else { self.showToast("Введите два числа, например 5 и 7"); return }
+            self.pushUndo()
+            self.project.customW = w
+            self.project.customH = h
+            self.rebuild()
+            self.refreshActivePanel()
+        })
+        present(alert, animated: true)
+    }
+
+    // MARK: Background (вырезать фон)
+
+    private let bgSwatches: [Int] = [0, 5, 6, 7, 9, 12, 15, 17, 20, 22, 33, 40]
+
+    private func refreshBackgroundPanel(_ keep: Bool) {
+        guard let i = currentClipIndex() else { closePanel(); return }
+        var items = [
+            PanelItem(title: "Без замены", symbol: "xmark"),
+            PanelItem(title: "Размытый фон", symbol: "drop"),
+            PanelItem(title: "Фото из галереи", symbol: "photo")
+        ]
+        items += bgSwatches.map { PanelItem(title: "Цвет", swatch: TextPalette.color($0)) }
+        let c = clips[i]
+        var sel = 0
+        switch c.bgMode {
+        case 2: sel = 1
+        case 1: sel = 2
+        case 3: sel = 3 + (bgSwatches.firstIndex(of: c.bgColor) ?? 0)
+        default: sel = 0
+        }
+        panel.configure(title: "Фон · клип \(i + 1) (вырезает человека)", items: items, selected: sel, slider: nil,
+                        extra: c.bgMode == 0 ? nil : "Ко всем", keepScroll: keep)
+    }
+
+    private func handleBackgroundSelect(_ index: Int) {
+        guard #available(iOS 15.0, *) else { showToast("Вырезание фона работает на iOS 15 и новее"); return }
+        if index == 2 {
+            pickerPurpose = .bgPhoto
+            var config = PHPickerConfiguration()
+            config.filter = .images
+            config.selectionLimit = 1
+            let picker = PHPickerViewController(configuration: config)
+            picker.delegate = self
+            present(picker, animated: true)
+            return
+        }
+        mutateClip {
+            switch index {
+            case 0: $0.bgMode = 0
+            case 1: $0.bgMode = 2
+            default: $0.bgMode = 3; $0.bgColor = bgSwatches[min(index - 3, bgSwatches.count - 1)]
+            }
+        }
+    }
+
+    private func applyBackgroundToAll() {
+        guard let i = currentClipIndex() else { return }
+        pushUndo()
+        let src = clips[i]
+        for k in 0..<clips.count {
+            clips[k].bgMode = src.bgMode
+            clips[k].bgFile = src.bgFile
+            clips[k].bgColor = src.bgColor
+        }
+        refreshVideoComposition()
+        reloadTimeline()
+        showToast("Фон применён ко всем клипам")
+    }
+
+    fileprivate func setBackgroundPhoto(_ image: UIImage) {
+        guard let i = currentClipIndex() else { return }
+        guard let data = image.jpegData(compressionQuality: 0.9) else { return }
+        let name = "\(UUID().uuidString).jpg"
+        do { try data.write(to: DraftStore.shared.mediaURL(name)) } catch { showToast("Не удалось сохранить фото"); return }
+        pushUndo()
+        clips[i].bgMode = 1
+        clips[i].bgFile = name
+        refreshVideoComposition()
+        reloadTimeline()
+        refreshActivePanel()
+    }
+
+    // MARK: Audio panel
+
+    private enum AudioTarget { case audio(Int), clip(Int) }
+
+    private func audioTarget() -> AudioTarget? {
+        if let id = selectedAudioID, let i = audios.firstIndex(where: { $0.id == id }) { return .audio(i) }
+        if let i = currentClipIndex() { return .clip(i) }
+        return nil
+    }
+
+    private func refreshAudioPanel(_ keep: Bool) {
+        let target = audioTarget()
+        var items: [PanelItem] = []
+        var sel: Int?
+        var cfg: SliderConfig?
+        var name = "Звук"
+        var volume: Float = 1, effect = 0, fadeIn = 0.0, fadeOut = 0.0
+        var isImageClip = false
+        switch target {
+        case .audio(let i)?:
+            let a = audios[i]; name = "Аудио · \(a.title)"
+            volume = a.volume; effect = a.effect; fadeIn = a.fadeIn; fadeOut = a.fadeOut
+        case .clip(let i)?:
+            let c = clips[i]; name = "Звук видео · клип \(i + 1)"
+            volume = c.volume; effect = c.audioEffect; fadeIn = c.fadeIn; fadeOut = c.fadeOut
+            isImageClip = c.isImage
+        case nil:
+            break
+        }
+        switch audioTab {
+        case 0:
+            var clipMuted = false
+            if case .clip? = target { clipMuted = volume == 0 }
+            items = [
+                PanelItem(title: "Файл аудио", symbol: "music.note"),
+                PanelItem(title: "Звук из видео", symbol: "film"),
+                PanelItem(title: "Удалить аудио", symbol: "trash"),
+                PanelItem(title: "Выкл. звук этого клипа", symbol: "speaker.slash.fill", on: clipMuted),
+                PanelItem(title: "Выкл. звук всех клипов", symbol: "speaker.slash"),
+                PanelItem(title: "Вкл. звук всех клипов", symbol: "speaker.wave.2.fill")
+            ]
+        case 1:
+            items = [PanelItem(title: "100%", badge: "100%"), PanelItem(title: "150%", badge: "150%"),
+                     PanelItem(title: "200%", badge: "200%"), PanelItem(title: "Тишина", badge: "0%")]
+            cfg = SliderConfig(title: "Громкость", min: 0, max: 3, value: volume) { "\(Int($0 * 100))%" }
+        case 2:
+            items = AudioEffect.allCases.map { PanelItem(title: $0.title, symbol: $0.symbol) }
+            sel = effect
+        case 3:
+            items = [PanelItem(title: "Без появления", symbol: "xmark")]
+            cfg = SliderConfig(title: "Появление", min: 0, max: 5, value: Float(fadeIn)) { String(format: "%.1fс", Double($0)) }
+        default:
+            items = [PanelItem(title: "Без затухания", symbol: "xmark")]
+            cfg = SliderConfig(title: "Затухание", min: 0, max: 5, value: Float(fadeOut)) { String(format: "%.1fс", Double($0)) }
+        }
+        if isImageClip && audioTab != 0 { name = "У картинки нет звука" }
+        panel.configure(title: name, items: items, selected: sel, slider: cfg,
+                        chips: ["Звук", "Громкость", "Эффекты", "Появление", "Затухание"], selectedChip: audioTab, keepScroll: keep)
+    }
+
+    private func setAudioParam(_ f: (inout Float, inout Int, inout Double, inout Double) -> Void) {
+        guard let target = audioTarget() else { return }
+        pushUndo()
+        switch target {
+        case .audio(let i):
+            var v = audios[i].volume, e = audios[i].effect, fi = audios[i].fadeIn, fo = audios[i].fadeOut
+            f(&v, &e, &fi, &fo)
+            if e != audios[i].effect { audios[i].processed = nil }
+            audios[i].volume = v; audios[i].effect = e; audios[i].fadeIn = fi; audios[i].fadeOut = fo
+        case .clip(let i):
+            var v = clips[i].volume, e = clips[i].audioEffect, fi = clips[i].fadeIn, fo = clips[i].fadeOut
+            f(&v, &e, &fi, &fo)
+            if e != clips[i].audioEffect { clips[i].processedAudio = nil }
+            clips[i].volume = v; clips[i].audioEffect = e; clips[i].fadeIn = fi; clips[i].fadeOut = fo
+        }
+        rebuild()
+        refreshActivePanel()
+    }
+
+    private func handleAudioSelect(_ index: Int) {
+        switch audioTab {
+        case 0:
+            switch index {
+            case 0:
+                guard totalSeconds > 0.2 else { showToast("Сначала добавьте видео"); return }
+                let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio], asCopy: true)
+                picker.delegate = self
+                present(picker, animated: true)
+            case 1:
+                guard totalSeconds > 0.2 else { showToast("Сначала добавьте видео"); return }
+                pickerPurpose = .audioFromVideo
+                var config = PHPickerConfiguration()
+                config.filter = .videos
+                config.selectionLimit = 1
+                let picker = PHPickerViewController(configuration: config)
+                picker.delegate = self
+                present(picker, animated: true)
+            case 2:
+                guard let id = selectedAudioID else { showToast("Выберите аудио на дорожке аудио"); return }
+                pushUndo()
+                audios.removeAll { $0.id == id }
+                selectedAudioID = nil
+                rebuild()
+                refreshActivePanel()
+            case 3:
+                guard let i = currentClipIndex() else { return }
+                pushUndo()
+                clips[i].volume = clips[i].volume > 0 ? 0 : 1
+                rebuild()
+                refreshActivePanel()
+            case 4:
+                pushUndo()
+                for k in 0..<clips.count { clips[k].volume = 0 }
+                rebuild()
+                refreshActivePanel()
+                showToast("Звук всех клипов выключен")
+            default:
+                pushUndo()
+                for k in 0..<clips.count { clips[k].volume = 1 }
+                rebuild()
+                refreshActivePanel()
+            }
+        case 1:
+            let values: [Float] = [1, 1.5, 2, 0]
+            setAudioParam { v, _, _, _ in v = values[min(index, values.count - 1)] }
+        case 2:
+            setAudioParam { _, e, _, _ in e = index }
+        case 3:
+            setAudioParam { _, _, fi, _ in fi = 0 }
+        default:
+            setAudioParam { _, _, _, fo in fo = 0 }
+        }
+    }
+
+    /// Запускает обработку звука эффектами (в фоне), после — пересобирает композицию.
+    private func ensureProcessedAudio() {
+        for c in clips where c.audioEffect != 0 && c.processedAudio == nil {
+            guard let eff = AudioEffect(rawValue: c.audioEffect) else { continue }
+            let key = "c-\(c.id)-\(c.audioEffect)"
+            guard !processingKeys.contains(key) else { continue }
+            processingKeys.insert(key)
+            showToast("Обработка звука…")
+            let id = c.id
+            AudioFXStore.process(asset: c.asset, effect: eff) { [weak self] result in
+                guard let self = self else { return }
+                self.processingKeys.remove(key)
+                guard let result = result, let i = self.clips.firstIndex(where: { $0.id == id }),
+                      self.clips[i].audioEffect == eff.rawValue else { return }
+                self.clips[i].processedAudio = result
+                self.rebuild()
+            }
+        }
+        for a in audios where a.effect != 0 && a.processed == nil {
+            guard let eff = AudioEffect(rawValue: a.effect) else { continue }
+            let key = "a-\(a.id)-\(a.effect)"
+            guard !processingKeys.contains(key) else { continue }
+            processingKeys.insert(key)
+            showToast("Обработка звука…")
+            let id = a.id
+            AudioFXStore.process(asset: a.asset, effect: eff) { [weak self] result in
+                guard let self = self else { return }
+                self.processingKeys.remove(key)
+                guard let result = result, let i = self.audios.firstIndex(where: { $0.id == id }),
+                      self.audios[i].effect == eff.rawValue else { return }
+                self.audios[i].processed = result
+                self.rebuild()
+            }
+        }
+    }
+
+    // MARK: Panel selection dispatcher
+
+    private func handlePanelSelect(_ index: Int) {
+        guard let kind = activePanel else { return }
+        switch kind {
+        case .speed:
+            guard let i = currentClipIndex(), index < speedPresets.count else { return }
+            pushUndo()
+            clips[i].speed = speedPresets[index]
+            rebuild()
+            refreshActivePanel()
+
+        case .filter:
+            guard let i = currentClipIndex() else { return }
+            pushUndo()
+            let ids = FilterCatalog.ids(for: filterCategory)
+            clips[i].filterID = index == 0 ? 0 : ids[min(index - 1, ids.count - 1)]
+            refreshVideoComposition()   // только этот клип — у остальных фильтры не трогаем
+            reloadTimeline()
+            refreshActivePanel()
+
+        case .adjust:
+            handleAdjustSelect(index)
+
+        case .transition:
+            guard clips.count >= 2 else { return }
+            let j = min(transitionBoundary, clips.count - 2)
+            pushUndo()
+            let list = TransitionCatalog.list(transitionCategory)
+            if index == 0 {
+                clips[j].transitionID = 0
+            } else if index == 1 {
+                clips[j].transitionID = list.randomElement()?.id ?? 0
+            } else if index - 2 < list.count {
+                clips[j].transitionID = list[index - 2].id
+            }
+            rebuild()
+            refreshActivePanel()
+            previewTransition(j)
+
+        case .animation: handleAnimationSelect(index)
+        case .effects: handleEffectsSelect(index)
+        case .frame: handleFrameSelect(index)
+        case .background: handleBackgroundSelect(index)
+        case .text: handleTextPanel(index)
+        case .audio: handleAudioSelect(index)
+        }
+    }
+
     // MARK: Slider callbacks
 
     private func sliderBegan() {
         switch activePanel {
-        case .filter?, .transition?: pushUndo()
         case .text?: if selectedTextID != nil { pushUndo() }
-        case .audio?: if selectedAudioID != nil { pushUndo() }
+        case .audio?, .speed?, .filter?, .transition?, .adjust?, .effects?, .animation?: pushUndo()
         default: break
         }
     }
@@ -4541,13 +6409,28 @@ final class ViewController: UIViewController {
 
     private func sliderChanged(_ v: Float) {
         switch activePanel {
+        case .speed?:
+            if let i = currentClipIndex() { clips[i].speed = max(0.1, (v * 20).rounded() / 20) }
         case .filter?:
             guard let i = currentClipIndex() else { return }
             clips[i].filterIntensity = v
             refreshVideoComposition()
+        case .adjust?:
+            guard let i = currentClipIndex() else { return }
+            var a = clips[i].adjust
+            setAdjustValue(Double(v), &a)
+            clips[i].adjust = a
+            refreshVideoComposition()
         case .transition?:
             guard clips.count >= 2 else { return }
             clips[min(transitionBoundary, clips.count - 2)].transitionDuration = Double(v)
+        case .animation?:
+            if animTab == 0 { project.introDuration = Double(v) } else { project.outroDuration = Double(v) }
+            refreshVideoComposition()
+        case .effects?:
+            guard let i = currentClipIndex() else { return }
+            if fxTab == 1 { clips[i].rotation = Double(v) } else if fxTab == 2 { clips[i].zoom = Double(v) }
+            refreshVideoComposition()
         case .text?:
             switch textTab {
             case .text: mutateTextLive { $0.size = CGFloat(v) }
@@ -4558,20 +6441,34 @@ final class ViewController: UIViewController {
             default: break
             }
         case .audio?:
-            if let id = selectedAudioID, let idx = audios.firstIndex(where: { $0.id == id }) { audios[idx].volume = v }
+            guard let target = audioTarget() else { return }
+            switch (audioTab, target) {
+            case (1, .audio(let i)): audios[i].volume = v
+            case (1, .clip(let i)): clips[i].volume = v
+            case (3, .audio(let i)): audios[i].fadeIn = Double(v)
+            case (3, .clip(let i)): clips[i].fadeIn = Double(v)
+            case (4, .audio(let i)): audios[i].fadeOut = Double(v)
+            case (4, .clip(let i)): clips[i].fadeOut = Double(v)
+            default: break
+            }
         default: break
         }
     }
 
     private func sliderEnded(_ v: Float) {
         switch activePanel {
+        case .speed?, .audio?:
+            rebuild()
+            refreshActivePanel()
         case .transition?:
             guard clips.count >= 2 else { return }
             let j = min(transitionBoundary, clips.count - 2)
             rebuild()
             previewTransition(j)
-        case .audio?:
-            rebuild()
+        case .animation?:
+            let total = totalSeconds
+            if animTab == 0 { playRange(from: 0, until: project.introDuration + 0.6) }
+            else { playRange(from: max(0, total - project.outroDuration - 0.8), until: total) }
         case .text?:
             reloadTimeline()
             if (textTab == .animIn || textTab == .animOut), let o = selectedText { previewText(o) }
@@ -4838,6 +6735,7 @@ final class ViewController: UIViewController {
             o.size = 0.06
             texts.append(o)
             clearSelection()
+            focusLane = .text
             selectedTextID = o.id
         }
         textsChanged()
@@ -4935,37 +6833,10 @@ final class ViewController: UIViewController {
         updateTextBox()
     }
 
-    // MARK: Audio
+    // MARK: Audio import
 
-    private func handleAudioPanel(_ index: Int) {
-        switch index {
-        case 0:
-            guard totalSeconds > 0.2 else { showToast("Сначала добавьте видео"); return }
-            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio], asCopy: true)
-            picker.delegate = self
-            present(picker, animated: true)
-        case 1:
-            guard let id = selectedAudioID else { showToast("Выберите аудио на дорожке под видео"); return }
-            pushUndo()
-            audios.removeAll { $0.id == id }
-            selectedAudioID = nil
-            rebuild()
-            refreshActivePanel()
-        default:
-            guard let i = currentClipIndex() else { return }
-            pushUndo()
-            clips[i].volume = clips[i].volume > 0 ? 0 : 1
-            rebuild()
-            refreshActivePanel()
-        }
-    }
-
-    fileprivate func addAudio(from url: URL) {
+    fileprivate func addAudio(importedFile file: String, title: String) {
         guard totalSeconds > 0.2 else { showToast("Сначала добавьте видео"); return }
-        guard let file = DraftStore.shared.importMedia(from: url, defaultExt: "m4a") else {
-            showToast("Не удалось загрузить аудио")
-            return
-        }
         let asset = AVAsset(url: DraftStore.shared.mediaURL(file))
         let srcDur = floor(asset.duration.secs * Double(kTimescale)) / Double(kTimescale)
         guard asset.tracks(withMediaType: .audio).first != nil, srcDur > 0.2 else {
@@ -4974,21 +6845,46 @@ final class ViewController: UIViewController {
         }
         let start = min(displayTime, max(0, totalSeconds - 0.5))
         let dur = min(srcDur, totalSeconds - start)
-        let a = AudioClip(asset: asset, file: file, title: url.deletingPathExtension().lastPathComponent,
-                          start: start, duration: dur, sourceDuration: srcDur)
+        let a = AudioClip(asset: asset, file: file, title: title, start: start, duration: dur, sourceDuration: srcDur)
         pushUndo()
         audios.append(a)
         clearSelection()
+        focusLane = .audio
         selectedAudioID = a.id
         rebuild()
         refreshActivePanel()
     }
 
-    // MARK: Add video
+    /// Звук из видео из галереи → становится аудио-дорожкой.
+    fileprivate func extractAudio(_ results: [PHPickerResult]) {
+        guard let r = results.first else { return }
+        loader.startAnimating()
+        r.itemProvider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { [weak self] url, _ in
+            var name: String?
+            if let url = url { name = DraftStore.shared.importMedia(from: url, defaultExt: "mov") }
+            DispatchQueue.main.async {
+                self?.loader.stopAnimating()
+                guard let name = name else { self?.showToast("Не удалось загрузить видео"); return }
+                self?.addAudio(importedFile: name, title: "Звук из видео")
+            }
+        }
+    }
+
+    fileprivate func loadBackgroundPhoto(_ results: [PHPickerResult]) {
+        guard let r = results.first, r.itemProvider.canLoadObject(ofClass: UIImage.self) else { return }
+        r.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] obj, _ in
+            DispatchQueue.main.async {
+                if let img = obj as? UIImage { self?.setBackgroundPhoto(img) }
+            }
+        }
+    }
+
+    // MARK: Add video / photo
 
     private func didTapAddVideo() {
+        pickerPurpose = .clips
         var config = PHPickerConfiguration()
-        config.filter = .videos
+        config.filter = .any(of: [.videos, .images])
         config.selectionLimit = 0   // можно выбрать сразу несколько
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
@@ -5009,15 +6905,32 @@ final class ViewController: UIViewController {
         let collector = ClipCollector()
 
         for (idx, r) in results.enumerated() {
+            let provider = r.itemProvider
             group.enter()
-            r.itemProvider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, error in
-                defer { group.leave() }
-                guard let url = url, error == nil,
-                      let file = DraftStore.shared.importMedia(from: url, defaultExt: "mov") else { return }
-                let asset = AVAsset(url: DraftStore.shared.mediaURL(file))
-                let dur = floorTicks(asset.duration.secs)
-                guard dur.secs > 0.1, asset.tracks(withMediaType: .video).first != nil else { return }
-                collector.set(idx, VideoClip(asset: asset, file: file, sourceRange: CMTimeRange(start: .zero, duration: dur)))
+            if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+                provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, error in
+                    defer { group.leave() }
+                    guard let url = url, error == nil,
+                          let file = DraftStore.shared.importMedia(from: url, defaultExt: "mov") else { return }
+                    let asset = AVAsset(url: DraftStore.shared.mediaURL(file))
+                    let dur = floorTicks(asset.duration.secs)
+                    guard dur.secs > 0.1, asset.tracks(withMediaType: .video).first != nil else { return }
+                    collector.set(idx, VideoClip(asset: asset, file: file, sourceRange: CMTimeRange(start: .zero, duration: dur)))
+                }
+            } else if provider.canLoadObject(ofClass: UIImage.self) {
+                provider.loadObject(ofClass: UIImage.self) { obj, _ in
+                    guard let img = obj as? UIImage else { group.leave(); return }
+                    // Картинка → клип по умолчанию на 3 секунды (можно растянуть за края)
+                    MediaTools.makeStillVideo(image: img) { name in
+                        defer { group.leave() }
+                        guard let name = name else { return }
+                        let asset = AVAsset(url: DraftStore.shared.mediaURL(name))
+                        collector.set(idx, VideoClip(asset: asset, file: name, isImage: true,
+                                                     sourceRange: CMTimeRange(start: .zero, duration: ticks(3))))
+                    }
+                }
+            } else {
+                group.leave()
             }
         }
 
@@ -5025,11 +6938,108 @@ final class ViewController: UIViewController {
             guard let self = self else { return }
             self.loader.stopAnimating()
             let newClips = collector.ordered()
-            guard !newClips.isEmpty else { self.showToast("Не удалось загрузить видео"); return }
+            guard !newClips.isEmpty else { self.showToast("Не удалось загрузить файлы"); return }
             self.pushUndo()
             let resumeTime = self.clips.isEmpty ? CMTime.zero : ticks(self.displayTime)
             self.clips.append(contentsOf: newClips)
+            self.focusLane = .video
             self.rebuild(seekTo: resumeTime)
+        }
+    }
+
+    // MARK: Reverse / freeze
+
+    private func reverseCurrentClip() {
+        guard let i = currentClipIndex() else { return }
+        let c = clips[i]
+        guard !c.isImage else { showToast("У картинки нет движения 🙂"); return }
+        guard c.sourceRange.duration.secs <= 30 else {
+            showToast("Реверс — для кусков до 30 сек. Разрежьте клип")
+            return
+        }
+        loader.startAnimating()
+        showToast("Делаю реверс…")
+        let id = c.id
+        MediaTools.reverse(asset: c.asset, range: c.sourceRange) { [weak self] name in
+            guard let self = self else { return }
+            self.loader.stopAnimating()
+            guard let name = name, let k = self.clips.firstIndex(where: { $0.id == id }) else {
+                self.showToast("Не получилось сделать реверс")
+                return
+            }
+            self.pushUndo()
+            let asset = AVAsset(url: DraftStore.shared.mediaURL(name))
+            self.clips[k].asset = asset
+            self.clips[k].file = name
+            self.clips[k].sourceRange = CMTimeRange(start: .zero, duration: floorTicks(asset.duration.secs))
+            self.clips[k].processedAudio = nil
+            self.clips[k].audioEffect = 0
+            self.filterPreviewClipID = nil
+            self.rebuild()
+            self.refreshActivePanel()
+        }
+    }
+
+    private func freezeFrame(seconds: Double) {
+        guard let b = build, let i = currentClipIndex() else { return }
+        let t = displayTime
+        let clip = clips[i]
+        guard !clip.isImage else { showToast("Это уже картинка"); return }
+        let offset = t - b.layout.starts[i].secs
+        let dur = b.layout.durations[i].secs
+        guard offset > 0.2, dur - offset > 0.2 else {
+            showToast("Поставьте красную палку внутрь клипа")
+            return
+        }
+        let srcOffset = ticks(offset * Double(clip.speed))
+        let srcTime = clip.sourceRange.start.secs + offset * Double(clip.speed)
+        let id = clip.id
+        loader.startAnimating()
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let gen = AVAssetImageGenerator(asset: clip.asset)
+            gen.appliesPreferredTrackTransform = true
+            gen.requestedTimeToleranceBefore = .zero
+            gen.requestedTimeToleranceAfter = .zero
+            gen.maximumSize = CGSize(width: 1920, height: 1920)
+            guard let cg = try? gen.copyCGImage(at: CMTime(seconds: srcTime, preferredTimescale: 600), actualTime: nil) else {
+                DispatchQueue.main.async { self?.loader.stopAnimating(); self?.showToast("Не удалось взять кадр") }
+                return
+            }
+            MediaTools.makeStillVideo(image: UIImage(cgImage: cg)) { name in
+                guard let self = self else { return }
+                self.loader.stopAnimating()
+                guard let name = name, let k = self.clips.firstIndex(where: { $0.id == id }) else {
+                    self.showToast("Не удалось сделать заморозку")
+                    return
+                }
+                self.pushUndo()
+                var first = self.clips[k]
+                var second = self.clips[k]
+                first.sourceRange = CMTimeRange(start: first.sourceRange.start, duration: srcOffset)
+                first.transitionID = 0
+                second.id = UUID()
+                second.sourceRange = CMTimeRange(start: second.sourceRange.start + srcOffset,
+                                                 duration: second.sourceRange.duration - srcOffset)
+                var still = self.clips[k]
+                still.id = UUID()
+                still.asset = AVAsset(url: DraftStore.shared.mediaURL(name))
+                still.file = name
+                still.isImage = true
+                still.sourceRange = CMTimeRange(start: .zero, duration: ticks(seconds))
+                still.speed = 1
+                still.transitionID = 0
+                still.volume = 0
+                still.audioEffect = 0
+                still.processedAudio = nil
+                still.fadeIn = 0
+                still.fadeOut = 0
+                self.clips.replaceSubrange(k...k, with: [first, still, second])
+                self.clearSelection()
+                self.selectedClipIndex = k + 1
+                self.rebuild(seekTo: ticks(t))
+                self.refreshActivePanel()
+            }
         }
     }
 
@@ -5037,17 +7047,21 @@ final class ViewController: UIViewController {
 
     private func makeDraft(id: UUID) -> Draft {
         Draft(id: id, updated: Date(), duration: totalSeconds,
-              clips: clips.map {
-                  DraftClip(id: $0.id, file: $0.file, srcStart: $0.sourceRange.start.secs,
-                            srcDuration: $0.sourceRange.duration.secs, speed: $0.speed, filter: $0.filter.rawValue,
-                            filterIntensity: $0.filterIntensity, transitionID: $0.transitionID,
-                            transitionDuration: $0.transitionDuration, volume: $0.volume)
+              clips: clips.map { c in
+                  DraftClip(id: c.id, file: c.file, srcStart: c.sourceRange.start.secs,
+                            srcDuration: c.sourceRange.duration.secs, speed: c.speed, filterID: c.filterID,
+                            filterIntensity: c.filterIntensity, transitionID: c.transitionID,
+                            transitionDuration: c.transitionDuration, volume: c.volume,
+                            isImage: c.isImage, adjust: c.adjust, look: c.look, flipH: c.flipH, flipV: c.flipV,
+                            rotation: c.rotation, zoom: c.zoom, bgMode: c.bgMode, bgFile: c.bgFile, bgColor: c.bgColor,
+                            audioEffect: c.audioEffect, fadeIn: c.fadeIn, fadeOut: c.fadeOut)
               },
               texts: texts,
-              audios: audios.map {
-                  DraftAudio(id: $0.id, file: $0.file, title: $0.title, start: $0.start,
-                             sourceOffset: $0.sourceOffset, duration: $0.duration, volume: $0.volume)
-              })
+              audios: audios.map { a in
+                  DraftAudio(id: a.id, file: a.file, title: a.title, start: a.start, sourceOffset: a.sourceOffset,
+                             duration: a.duration, volume: a.volume, effect: a.effect, fadeIn: a.fadeIn, fadeOut: a.fadeOut)
+              },
+              project: project)
     }
 
     private func saveDraft(silent: Bool) {
@@ -5084,7 +7098,9 @@ final class ViewController: UIViewController {
         pausePlayback()
         closePanel()
         clips = []; texts = []; audios = []
+        project = ProjectSettings()
         clearSelection()
+        focusLane = .video
         undoStack = []
         updateUndoButton()
         currentDraftID = nil
@@ -5100,15 +7116,27 @@ final class ViewController: UIViewController {
         for c in d.clips {
             let url = DraftStore.shared.mediaURL(c.file)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            var clip = VideoClip(asset: AVAsset(url: url), file: c.file,
+            var clip = VideoClip(asset: AVAsset(url: url), file: c.file, isImage: c.isImage ?? false,
                                  sourceRange: CMTimeRange(start: ticks(c.srcStart), duration: ticks(c.srcDuration)))
             clip.id = c.id
             clip.speed = c.speed
-            clip.filter = FilterType(rawValue: c.filter) ?? .none
+            clip.filterID = c.filterID ?? 0
             clip.filterIntensity = c.filterIntensity
+            clip.adjust = c.adjust ?? Adjustments()
+            clip.look = c.look ?? 0
+            clip.flipH = c.flipH ?? false
+            clip.flipV = c.flipV ?? false
+            clip.rotation = c.rotation ?? 0
+            clip.zoom = c.zoom ?? 1
+            clip.bgMode = c.bgMode ?? 0
+            clip.bgFile = c.bgFile
+            clip.bgColor = c.bgColor ?? 0
             clip.transitionID = c.transitionID
             clip.transitionDuration = c.transitionDuration
             clip.volume = c.volume
+            clip.audioEffect = c.audioEffect ?? 0
+            clip.fadeIn = c.fadeIn ?? 0
+            clip.fadeOut = c.fadeOut ?? 0
             loadedClips.append(clip)
         }
         var loadedAudios: [AudioClip] = []
@@ -5121,12 +7149,17 @@ final class ViewController: UIViewController {
                                  sourceOffset: a.sourceOffset, duration: a.duration, sourceDuration: srcDur)
             clip.id = a.id
             clip.volume = a.volume
+            clip.effect = a.effect ?? 0
+            clip.fadeIn = a.fadeIn ?? 0
+            clip.fadeOut = a.fadeOut ?? 0
             loadedAudios.append(clip)
         }
         clips = loadedClips
         texts = d.texts
         audios = loadedAudios
+        project = d.project ?? ProjectSettings()
         clearSelection()
+        focusLane = .video
         undoStack = []
         updateUndoButton()
         currentDraftID = d.id
@@ -5142,7 +7175,7 @@ final class ViewController: UIViewController {
         guard let b = build, !clips.isEmpty else { showToast("Нечего экспортировать"); return }
         pausePlayback()
 
-        let vc = b.makeVideoComposition(clips: clips, texts: texts)
+        let vc = b.makeVideoComposition(clips: clips, texts: texts, project: project)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("edit_\(UUID().uuidString).mp4")
         try? FileManager.default.removeItem(at: url)
 
@@ -5288,12 +7321,22 @@ extension ViewController: UIGestureRecognizerDelegate {
 extension ViewController: PHPickerViewControllerDelegate, UIDocumentPickerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         picker.dismiss(animated: true)
-        importVideos(results)
+        let purpose = pickerPurpose
+        pickerPurpose = .clips
+        switch purpose {
+        case .clips: importVideos(results)
+        case .bgPhoto: loadBackgroundPhoto(results)
+        case .audioFromVideo: extractAudio(results)
+        }
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first else { return }
-        addAudio(from: url)
+        guard let file = DraftStore.shared.importMedia(from: url, defaultExt: "m4a") else {
+            showToast("Не удалось загрузить аудио")
+            return
+        }
+        addAudio(importedFile: file, title: url.deletingPathExtension().lastPathComponent)
     }
 }
 
