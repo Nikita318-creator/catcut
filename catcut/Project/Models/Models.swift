@@ -143,7 +143,9 @@ struct ProjectSettings: Codable, Equatable {
     var customW: Double = 0
     var customH: Double = 0
     var fillMode = 0                  // 0 вписать, 1 заполнить (с обрезкой)
-    var blurBackground = true         // размытый фон при «вписать»
+    var blurBackground = false        // размытый фон при «вписать» (по умолчанию выкл.)
+    /// Обрезка краёв, нормализованная 0...1 (origin сверху-слева). nil — без обрезки.
+    var crop: CGRect? = nil
     var introID = 0
     var introDuration = 0.6
     var outroID = 0

@@ -34,6 +34,8 @@ struct ProjectInfo {
     let outroID: Int
     let outroDuration: Double
     let total: Double
+    /// Нормализованная обрезка (0...1, origin сверху-слева). nil — без обрезки.
+    let crop: CGRect?
 }
 
 final class EditorInstruction: NSObject, AVVideoCompositionInstructionProtocol {
@@ -240,12 +242,13 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
     }
 
     /// Маска человека (Vision). Работает на iOS 15+.
-    private func personMask(_ pb: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> CIImage? {
+    /// Принимает уже ориентированный кадр (origin 0,0) — маска сразу совпадает с картинкой.
+    private func personMask(_ img: CIImage) -> CIImage? {
         if #available(iOS 15.0, *) {
             let req = VNGeneratePersonSegmentationRequest()
             req.qualityLevel = .balanced
             req.outputPixelFormat = kCVPixelFormatType_OneComponent8
-            let handler = VNImageRequestHandler(cvPixelBuffer: pb, orientation: orientation, options: [:])
+            let handler = VNImageRequestHandler(ciImage: img, options: [:])
             do { try handler.perform([req]) } catch { return nil }
             guard let obs = req.results?.first as? VNPixelBufferObservation else { return nil }
             return CIImage(cvPixelBuffer: obs.pixelBuffer)
@@ -253,8 +256,18 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
         return nil
     }
 
-    private func replaceBackground(_ img: CIImage, pb: CVPixelBuffer, layer: LayerInfo) -> CIImage {
-        guard let rawMask = personMask(pb, orientation: layer.orientation) else { return img }
+    /// Средняя яркость маски 0...1 — сколько кадра занимает человек.
+    private func maskCoverage(_ mask: CIImage, extent e: CGRect) -> Double {
+        let avg = mask.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: e)])
+        var px = [UInt8](repeating: 0, count: 4)
+        EditorCompositor.ciContext.render(avg, toBitmap: &px, rowBytes: 4,
+                                          bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                                          format: .RGBA8, colorSpace: nil)
+        return Double(px[0]) / 255
+    }
+
+    private func replaceBackground(_ img: CIImage, layer: LayerInfo) -> CIImage {
+        guard let rawMask = personMask(img) else { return img }
         let e = img.extent
         let m0 = rawMask.extent
         guard m0.width > 0, m0.height > 0 else { return img }
@@ -264,6 +277,9 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
             .clampedToExtent()
             .applyingGaussianBlur(sigma: max(1, Double(e.height) * 0.0015))
             .cropped(to: e)
+
+        // Человека в кадре нет — оставляем кадр как есть (раньше фон перекрывал всё видео)
+        if maskCoverage(mask, extent: e) < 0.01 { return img }
 
         var bg: CIImage
         switch layer.bgMode {
@@ -295,8 +311,19 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
         let e0 = img.extent
         img = img.transformed(by: CGAffineTransform(translationX: -e0.origin.x, y: -e0.origin.y))
 
+        // Обрезка краёв (кадрирование): режем исходник, разрешение = размер обрезанной области
+        if let c = project.crop {
+            let e = img.extent
+            let r = CGRect(x: e.width * c.minX, y: e.height * (1 - c.maxY),
+                           width: e.width * c.width, height: e.height * c.height)
+            if r.width > 1, r.height > 1 {
+                img = img.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
+            }
+        }
+        let isFill = project.fillMode == 1 || project.crop != nil
+
         // Вырезаем человека и подставляем фон
-        if layer.bgMode != 0 { img = replaceBackground(img, pb: pb, layer: layer) }
+        if layer.bgMode != 0 { img = replaceBackground(img, layer: layer) }
 
         // Фильтр (пресет с силой) + ручная настройка + живой эффект
         if let preset = layer.preset {
@@ -312,7 +339,7 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
         guard w > 0, h > 0 else { return black(rect) }
         let fit = min(rect.width / w, rect.height / h)
         let fill = max(rect.width / w, rect.height / h)
-        let s = project.fillMode == 1 ? fill : fit
+        let s = isFill ? fill : fit
 
         var placed = img.transformed(by: CGAffineTransform(scaleX: s, y: s))
         let pe = placed.extent
@@ -322,7 +349,7 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
         if layer.flipH || layer.flipV || layer.rotation != 0 || layer.zoom != 1 {
             // при повороте в режиме «вписать» сами уменьшаем, чтобы картинка не обрезалась
             var auto: CGFloat = 1
-            if project.fillMode == 0 && layer.rotation != 0 {
+            if !isFill && layer.rotation != 0 {
                 let th = CGFloat(layer.rotation) * .pi / 180
                 let bw = abs(pe.width * cos(th)) + abs(pe.height * sin(th))
                 let bh = abs(pe.width * sin(th)) + abs(pe.height * cos(th))
@@ -338,7 +365,7 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
 
         // Фон кадра: чёрный или размытая копия видео
         var base = black(rect)
-        if project.fillMode == 0 && project.blurBackground {
+        if !isFill && project.blurBackground {
             let sf = fill
             var bgImg = img.transformed(by: CGAffineTransform(scaleX: sf, y: sf))
             let be = bgImg.extent

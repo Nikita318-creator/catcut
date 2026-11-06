@@ -362,8 +362,8 @@ extension ViewController {
         var sel: Int?
         if frameTab == 0 {
             for p in AspectPresets.all { items.append(PanelItem(title: p.title, badge: p.title)) }
-            items.append(PanelItem(title: project.customActive ? "Свой \(Int(project.customW)):\(Int(project.customH))" : "Свой…", symbol: "pencil"))
-            sel = project.customActive ? AspectPresets.all.count : project.aspectIndex
+            items.append(PanelItem(title: "Своя рамка", symbol: "crop"))
+            sel = project.crop == nil ? 0 : project.aspectIndex
         } else {
             items = [
                 PanelItem(title: "Вписать", symbol: "arrow.down.right.and.arrow.up.left", on: project.fillMode == 0),
@@ -372,23 +372,74 @@ extension ViewController {
             ]
         }
         panel.configure(title: "Формат кадра", items: items, selected: sel, slider: nil,
-                        chips: ["Формат", "Заполнение"], selectedChip: frameTab, keepScroll: keep)
+                        chips: ["Обрезка", "Заполнение"], selectedChip: frameTab, keepScroll: keep)
+    }
+
+    /// Готовый формат = обрезка по центру до нужного соотношения (без полей и подложки).
+    static func centeredCrop(ratio: Double, source: CGSize) -> CGRect {
+        let a = Double(source.width / source.height)
+        if ratio < a {
+            let w = ratio / a
+            return CGRect(x: (1 - w) / 2, y: 0, width: w, height: 1)
+        } else {
+            let h = a / ratio
+            return CGRect(x: 0, y: (1 - h) / 2, width: 1, height: h)
+        }
+    }
+
+    /// Открывает экран кадрирования: рамка с сеткой поверх кадра, края тянутся пальцем.
+    func presentCrop() {
+        guard let i = currentClipIndex() else { return }
+        pausePlayback()
+        let clip = clips[i]
+        let t = clip.sourceRange.start.secs + min(0.1, clip.sourceRange.duration.secs / 2)
+        loader.startAnimating()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let gen = AVAssetImageGenerator(asset: clip.asset)
+            gen.appliesPreferredTrackTransform = true
+            gen.maximumSize = CGSize(width: 1600, height: 1600)
+            gen.requestedTimeToleranceBefore = .positiveInfinity
+            gen.requestedTimeToleranceAfter = .positiveInfinity
+            let cg = try? gen.copyCGImage(at: CMTime(seconds: t, preferredTimescale: 600), actualTime: nil)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.loader.stopAnimating()
+                guard let cg = cg else { self.showToast("Не удалось получить кадр"); return }
+                let vc = CropViewController()
+                vc.image = UIImage(cgImage: cg)
+                vc.initialCrop = self.project.crop
+                vc.modalPresentationStyle = .fullScreen
+                vc.onApply = { [weak self] rect in
+                    guard let self = self else { return }
+                    self.pushUndo()
+                    self.project.crop = rect
+                    self.project.aspectIndex = rect == nil ? 0 : AspectPresets.all.count   // «Своя рамка»
+                    self.project.customW = 0
+                    self.project.customH = 0
+                    self.rebuild()
+                    self.refreshActivePanel()
+                }
+                self.present(vc, animated: true)
+            }
+        }
     }
 
     func handleFrameSelect(_ index: Int) {
-        pushUndo()
         if frameTab == 0 {
-            if index == AspectPresets.all.count {
-                undoStack.removeLast()
-                updateUndoButton()
-                promptCustomRatio()
-                return
-            }
+            if index >= AspectPresets.all.count { presentCrop(); return }
+            let preset = AspectPresets.all[index]
+            pushUndo()
             project.aspectIndex = index
             project.customW = 0
             project.customH = 0
+            if preset.w > 0, let first = clips.first, let src = EditorBuild.orientedSize(of: first) {
+                project.crop = ViewController.centeredCrop(ratio: preset.w / preset.h, source: src)
+            } else {
+                project.crop = nil     // «Оригинал»
+            }
             rebuild()
         } else {
+            pushUndo()
             switch index {
             case 0: project.fillMode = 0
             case 1: project.fillMode = 1
@@ -438,7 +489,7 @@ extension ViewController {
         case 3: sel = 3 + (bgSwatches.firstIndex(of: c.bgColor) ?? 0)
         default: sel = 0
         }
-        panel.configure(title: "Фон · клип \(i + 1) (вырезает человека)", items: items, selected: sel, slider: nil,
+        panel.configure(title: "Вырезать фон · клип \(i + 1)", items: items, selected: sel, slider: nil,
                         extra: c.bgMode == 0 ? nil : "Ко всем", keepScroll: keep)
     }
 

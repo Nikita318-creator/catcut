@@ -38,7 +38,21 @@ final class EditorBuild {
         return img
     }
 
+    static func orientedSize(of clip: VideoClip) -> CGSize? {
+        guard let t = clip.asset.tracks(withMediaType: .video).first else { return nil }
+        let r = CGRect(origin: .zero, size: t.naturalSize).applying(t.preferredTransform)
+        let w = abs(r.width), h = abs(r.height)
+        return (w > 1 && h > 1) ? CGSize(width: w, height: h) : nil
+    }
+
     static func frameSize(for project: ProjectSettings, firstClip: VideoClip) -> CGSize {
+        // Обрезка: выходное разрешение = размер выбранной области (без полей и подложки)
+        if let c = project.crop, let src = orientedSize(of: firstClip) {
+            var w = src.width * c.width, h = src.height * c.height
+            let k = min(1, 1920 / max(w, h))
+            w *= k; h *= k
+            return CGSize(width: max(2, floor(w / 2) * 2), height: max(2, floor(h / 2) * 2))
+        }
         if let r = project.ratio {
             let longSide: CGFloat = 1920
             var w: CGFloat, h: CGFloat
@@ -180,7 +194,7 @@ final class EditorBuild {
         let info = ProjectInfo(fillMode: project.fillMode, blurBackground: project.blurBackground,
                                introID: project.introID, introDuration: project.introDuration,
                                outroID: project.outroID, outroDuration: project.outroDuration,
-                               total: layout.total.secs)
+                               total: layout.total.secs, crop: project.crop)
         let endTime = max(layout.total, composition.duration)
         var instructions: [AVVideoCompositionInstructionProtocol] = []
 
