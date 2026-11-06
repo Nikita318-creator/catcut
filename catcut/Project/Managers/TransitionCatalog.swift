@@ -4,29 +4,27 @@ import UIKit
 import CoreImage
 
 // =====================================================================
-// MARK: - Transition catalog (~110 отобранных переходов)
+// MARK: - Transition catalog (Премиальный набор современных переходов CapCut-style)
 // =====================================================================
 //
-// Переход = БАЗА (сдвиг, шторка, ирис, жалюзи, шум, 3D…) + ЭФФЕКТ (размытие, RGB, вспышка…)
-// + КРИВАЯ СКОРОСТИ (плавно / линейно / резко / пружина).
-// Комбинации и дают тысячи вариантов. ID перехода = номер в каталоге (0 = нет перехода).
+// База (сдвиг, зум, шторки, глитч, 3D, искажения) + Эффект (Zoom Blur, RGB Split, Flash, Shake)
+// + Пружинная физика и резкие кривые скорости (Snap / Back / Elastic).
 
 enum TransitionCategory: Int, CaseIterable {
-    case favorites, all, fade, push, zoom, wipe, shape, flip3d, distort, glitch, light
+    case favorites, all, motion, glitch, zoom, distort, wipe, flip3d, light, fade
 
     var title: String {
         switch self {
         case .favorites: return "♥ Избранное"
         case .all: return "Все"
-        case .fade: return "Фейд"
-        case .push: return "Сдвиг"
-        case .zoom: return "Зум"
-        case .wipe: return "Шторки"
-        case .shape: return "Фигуры"
-        case .flip3d: return "3D"
-        case .distort: return "Искажения"
-        case .glitch: return "Глитч"
-        case .light: return "Свет"
+        case .motion: return "⚡️ Рывки & Движение"
+        case .glitch: return "👾 Глитч & Кибер"
+        case .zoom: return "🌀 Зум & Наезд"
+        case .distort: return "🌊 Искажения"
+        case .wipe: return "🪟 Шторки & Сетки"
+        case .flip3d: return "🧊 3D Куб"
+        case .light: return "✨ Свет & Вспышки"
+        case .fade: return "💧 Фейды"
         }
     }
 
@@ -34,15 +32,14 @@ enum TransitionCategory: Int, CaseIterable {
         switch self {
         case .favorites: return "heart.fill"
         case .all: return "square.grid.2x2"
-        case .fade: return "drop.halffull"
-        case .push: return "arrow.left.and.right"
-        case .zoom: return "arrow.triangle.2.circlepath"
-        case .wipe: return "forward.end.fill"
-        case .shape: return "circle.dashed"
-        case .flip3d: return "cube"
-        case .distort: return "tornado"
-        case .glitch: return "bolt.horizontal.fill"
+        case .motion: return "bolt.fill"
+        case .glitch: return "ladybug.fill"
+        case .zoom: return "viewfinder"
+        case .distort: return "waveform.path.ecg"
+        case .wipe: return "squareshape.split.2x2"
+        case .flip3d: return "cube.fill"
         case .light: return "sun.max.fill"
+        case .fade: return "circle.fill"
         }
     }
 }
@@ -50,7 +47,6 @@ enum TransitionCategory: Int, CaseIterable {
 enum Dir: CaseIterable {
     case left, right, up, down, upLeft, upRight, downLeft, downRight
 
-    /// Куда едет картинка (система координат CoreImage: y вверх).
     var vector: CGPoint {
         switch self {
         case .left: return CGPoint(x: -1, y: 0)
@@ -79,7 +75,7 @@ enum Dir: CaseIterable {
 }
 
 enum Ease: CaseIterable {
-    case smooth, linear, snap, back
+    case smooth, linear, snap, back, elastic
 
     var title: String {
         switch self {
@@ -87,6 +83,7 @@ enum Ease: CaseIterable {
         case .linear: return "линейно"
         case .snap: return "резко"
         case .back: return "пружина"
+        case .elastic: return "упругость"
         }
     }
 
@@ -100,29 +97,15 @@ enum Ease: CaseIterable {
             let c1: CGFloat = 1.70158
             let c3 = c1 + 1
             return 1 + c3 * pow(x - 1, 3) + c1 * pow(x - 1, 2)
+        case .elastic:
+            let c4 = (2 * CGFloat.pi) / 3
+            return x == 0 ? 0 : x == 1 ? 1 : pow(2, -10 * x) * sin((x * 10 - 0.75) * c4) + 1
         }
     }
 }
 
-/// Дополнительный эффект «поверх» базового перехода (пульсирует в середине).
 enum Fx: CaseIterable {
-    case none, blur, zoomPulse, rgb, shake, flash, goldFlash, hue, saturate, tilt, zoomBlur
-
-    var suffix: String {
-        switch self {
-        case .none: return ""
-        case .blur: return " + размытие"
-        case .zoomPulse: return " + пульс"
-        case .rgb: return " + RGB"
-        case .shake: return " + тряска"
-        case .flash: return " + вспышка"
-        case .goldFlash: return " + золото"
-        case .hue: return " + цвета"
-        case .saturate: return " + сочность"
-        case .tilt: return " + наклон"
-        case .zoomBlur: return " + рывок"
-        }
-    }
+    case none, blur, zoomBlur, rgb, shake, flash, goldFlash, cyberpunk, chromatic, tilt
 }
 
 enum MosaicKind { case pixel, hex, crystal }
@@ -159,7 +142,6 @@ struct TransitionSpec {
     let ease: Ease
 }
 
-/// Избранные переходы (хранятся на устройстве).
 enum TransitionFavorites {
     private static let key = "favoriteTransitions"
     static var ids: [Int] {
@@ -196,122 +178,82 @@ enum TransitionCatalog {
         return byCategory[category] ?? all
     }
 
-    /// ~110 отобранных переходов. ВАЖНО: порядок не менять — id (и избранное) привязаны к номеру.
     private static func build() -> [TransitionSpec] {
         var list: [TransitionSpec] = []
         func add(_ name: String, _ base: Base, _ cat: TransitionCategory, fx: Fx = .none, ease: Ease = .smooth) {
             list.append(TransitionSpec(id: list.count + 1, name: name, category: cat, base: base, fx: fx, ease: ease))
         }
         let gold = CIColor(red: 1, green: 0.78, blue: 0.3)
+        let neonCyan = CIColor(red: 0, green: 0.9, blue: 1)
 
-        // Фейд
-        add("Плавный фейд", .dissolve, .fade)
-        add("Через чёрный", .dip(CIColor(red: 0, green: 0, blue: 0)), .fade)
-        add("Через белый", .dip(CIColor(red: 1, green: 1, blue: 1)), .fade)
-        add("Золотой фейд", .dip(gold), .fade)
-        add("Розовый фейд", .dip(CIColor(red: 1, green: 0.4, blue: 0.7)), .fade)
-        add("Синий фейд", .dip(CIColor(red: 0.15, green: 0.35, blue: 0.95)), .fade)
-        add("Дымка", .dissolve, .fade, fx: .blur)
-        add("Мягкий пульс", .dissolve, .fade, fx: .zoomPulse)
-        add("Лёгкий наклон", .dissolve, .fade, fx: .tilt)
-        add("Сочный фейд", .dissolve, .fade, fx: .saturate)
-        add("Радужный фейд", .dissolve, .fade, fx: .hue)
-
-        // Сдвиг и наезд
+        // ⚡️ Премиальные рывки и зум-блюры (CapCut/Reels style)
         let four: [(Dir, String)] = [(.left, "←"), (.right, "→"), (.up, "↑"), (.down, "↓")]
-        for (d, a) in four { add("Сдвиг \(a)", .push(d), .push) }
-        for (d, a) in four { add("Рывок \(a)", .push(d), .push, fx: .blur, ease: .snap) }
-        for (d, a) in four { add("Пружина \(a)", .push(d), .push, ease: .back) }
-        for (d, a) in [(Dir.upLeft, "↖"), (.upRight, "↗"), (.downLeft, "↙"), (.downRight, "↘")] { add("Диагональ \(a)", .push(d), .push) }
-        for (d, a) in four { add("Наезд \(a)", .cover(d), .push) }
-        add("Уход ←", .reveal(.left), .push)
-        add("Уход →", .reveal(.right), .push)
-
-        // Зум и вращение
-        add("Приближение", .zoom(inward: true, strength: 0.5), .zoom)
-        add("Рывок вперёд", .zoom(inward: true, strength: 0.6), .zoom, fx: .zoomBlur)
-        add("Приближение + блюр", .zoom(inward: true, strength: 0.5), .zoom, fx: .blur)
-        add("Отдаление", .zoom(inward: false, strength: 0.5), .zoom)
-        add("Отдаление + блюр", .zoom(inward: false, strength: 0.5), .zoom, fx: .blur)
-        add("Вращение ↻ 90°", .spin(cw: true, angle: .pi / 2), .zoom)
-        add("Вращение ↺ 90°", .spin(cw: false, angle: .pi / 2), .zoom)
-        add("Вращение ↻ 180°", .spin(cw: true, angle: .pi), .zoom, fx: .blur)
-        add("Вращение ↺ 360°", .spin(cw: false, angle: 2 * .pi), .zoom, fx: .zoomBlur)
-        add("Зум-наклон", .zoom(inward: true, strength: 0.9), .zoom, fx: .tilt)
-
-        // Шторки, двери, жалюзи
-        for (deg, a) in [(0, "→"), (180, "←"), (90, "↑"), (270, "↓"), (45, "↗"), (135, "↖"), (225, "↙"), (315, "↘")] {
-            add("Шторка \(a)", .wipe(angle: CGFloat(deg) * .pi / 180, soft: 0.3), .wipe)
+        for (d, a) in four {
+            add("Турбо-рывок \(a)", .push(d), .motion, fx: .zoomBlur, ease: .snap)
+            add("Рывок + RGB \(a)", .push(d), .motion, fx: .rgb, ease: .snap)
+            add("Пружинный сдвиг \(a)", .push(d), .motion, fx: .blur, ease: .back)
         }
-        add("Туман →", .wipe(angle: 0, soft: 0.9), .wipe)
-        add("Двери ↔ откр.", .doors(vertical: true, open: true), .wipe)
-        add("Двери ↔ закр.", .doors(vertical: true, open: false), .wipe)
-        add("Двери ↕ откр.", .doors(vertical: false, open: true), .wipe)
-        add("Двери ↕ закр.", .doors(vertical: false, open: false), .wipe)
-        add("Жалюзи 8", .blinds(count: 8, angle: 0, soft: 0.1), .wipe)
-        add("Жалюзи 16 гор.", .blinds(count: 16, angle: .pi / 2, soft: 0.1), .wipe)
-        add("Жалюзи ↗ 8", .blinds(count: 8, angle: .pi / 4, soft: 0.3), .wipe)
-        add("Полосы 8", .slices(count: 8, vertical: true), .wipe)
-        add("Полосы 16 гор.", .slices(count: 16, vertical: false), .wipe)
-        add("Сетка 8", .grid(cells: 8, diagonal: false, sweep: 1), .wipe)
-        add("Ромбы из центра", .grid(cells: 8, diagonal: true, sweep: 2), .wipe)
-        add("Сетка 16", .grid(cells: 16, diagonal: false, sweep: 0), .wipe)
+        add("Кибер-наезд 🚀", .zoom(inward: true, strength: 0.95), .motion, fx: .zoomBlur, ease: .snap)
+        add("Катапульта 💥", .zoom(inward: true, strength: 0.8), .motion, fx: .rgb, ease: .elastic)
+        add("Ударный расфокус", .dissolve, .motion, fx: .zoomBlur, ease: .snap)
 
-        // Фигуры и шум
-        add("Круг из центра", .iris(inward: false, scaleX: 1, soft: 0.4, cx: 0.5, cy: 0.5), .shape)
-        add("Круг чётко", .iris(inward: false, scaleX: 1, soft: 0.03, cx: 0.5, cy: 0.5), .shape)
-        add("Круг внутрь", .iris(inward: true, scaleX: 1, soft: 0.4, cx: 0.5, cy: 0.5), .shape)
-        add("Овал", .iris(inward: false, scaleX: 1.8, soft: 0.4, cx: 0.5, cy: 0.5), .shape)
-        add("Столб внутрь", .iris(inward: true, scaleX: 0.55, soft: 0.4, cx: 0.5, cy: 0.5), .shape)
-        for (cx, cy, a) in [(CGFloat(0), CGFloat(1), "↖"), (1, 1, "↗"), (0, 0, "↙"), (1, 0, "↘")] {
-            add("Круг из угла \(a)", .iris(inward: false, scaleX: 1, soft: 0.4, cx: cx, cy: cy), .shape)
+        // 👾 Глитч и Киберпанк
+        add("Кибер-глитч RGB", .dissolve, .glitch, fx: .rgb, ease: .snap)
+        add("Неоновый распад", .dissolve, .glitch, fx: .cyberpunk, ease: .snap)
+        add("Тряска с помехами", .dissolve, .glitch, fx: .shake, ease: .snap)
+        add("Глитч-шторки ↔", .wipe(angle: 0, soft: 0.05), .glitch, fx: .rgb, ease: .snap)
+        add("Пиксели + RGB", .mosaic(.pixel, strength: 1.5), .glitch, fx: .rgb, ease: .snap)
+        add("Вихрь + Глитч", .twirl(cw: true, strength: 5), .glitch, fx: .chromatic, ease: .snap)
+        add("Куб + Киберпанк", .cube(left: true), .glitch, fx: .cyberpunk, ease: .snap)
+        add("Цифровой сдвиг ←", .push(.left), .glitch, fx: .chromatic, ease: .snap)
+
+        // 🌀 Зум и Вращение
+        add("Динамический зум IN", .zoom(inward: true, strength: 0.6), .zoom, fx: .blur)
+        add("Динамический зум OUT", .zoom(inward: false, strength: 0.6), .zoom, fx: .blur)
+        add("Вращение 360° Turbo", .spin(cw: true, angle: 2 * .pi), .zoom, fx: .zoomBlur, ease: .back)
+        add("Вращение 90° ↻", .spin(cw: true, angle: .pi / 2), .zoom)
+        add("Вращение 90° ↺", .spin(cw: false, angle: .pi / 2), .zoom)
+        add("Зум-наклон 3D", .zoom(inward: true, strength: 0.8), .zoom, fx: .tilt)
+
+        // 🌊 Искажения и Кислота
+        add("Вихрь пространственный", .twirl(cw: true, strength: 4), .distort)
+        add("Черная дыра (Сжатие)", .pinch(sign: 1), .distort, fx: .zoomBlur)
+        add("Выпуклость линзы", .bump(sign: 1), .distort)
+        add("Пикселизация плавная", .mosaic(.pixel, strength: 1.2), .distort)
+        add("Кристаллизация", .mosaic(.crystal, strength: 1.2), .distort)
+        add("Соты кибернетические", .mosaic(.hex, strength: 1.2), .distort, fx: .chromatic)
+
+        // 🪟 Современные шторки и геометрические формы
+        for (deg, a) in [(0, "→"), (180, "←"), (90, "↑"), (270, "↓"), (45, "↗"), (135, "↖")] {
+            add("Стильная шторка \(a)", .wipe(angle: CGFloat(deg) * .pi / 180, soft: 0.15), .wipe, ease: .smooth)
         }
-        add("Облака", .noise(grain: 70, cloud: true, soft: 0.35), .shape)
-        add("Облака L", .noise(grain: 140, cloud: true, soft: 0.35), .shape)
-        add("Зерно", .noise(grain: 4, cloud: false, soft: 0.5), .shape)
-        add("Блоки", .noise(grain: 24, cloud: false, soft: 0.03), .shape)
-        add("Пыль", .noise(grain: 1, cloud: false, soft: 0.5), .shape)
+        add("Элегантные двери ↔", .doors(vertical: true, open: true), .wipe, ease: .back)
+        add("Элегантные двери ↕", .doors(vertical: false, open: true), .wipe, ease: .back)
+        add("Жалюзи динамические 16", .blinds(count: 16, angle: 0, soft: 0.05), .wipe)
+        add("Сетка фокусная 8x8", .grid(cells: 8, diagonal: true, sweep: 1), .wipe)
+        add("Ирис-круг динамический", .iris(inward: false, scaleX: 1, soft: 0.1, cx: 0.5, cy: 0.5), .wipe, ease: .back)
 
-        // 3D
-        add("Переворот ↔", .flip(vertical: false), .flip3d)
-        add("Переворот ↕", .flip(vertical: true), .flip3d)
-        add("Куб ←", .cube(left: true), .flip3d)
-        add("Куб →", .cube(left: false), .flip3d)
-        add("Куб + блюр", .cube(left: true), .flip3d, fx: .blur)
+        // 🧊 3D Куб и Перевороты
+        add("3D Куб влево (Pro)", .cube(left: true), .flip3d, fx: .blur, ease: .smooth)
+        add("3D Куб вправо (Pro)", .cube(left: false), .flip3d, fx: .blur, ease: .smooth)
+        add("Флип горизонтальный", .flip(vertical: false), .flip3d, ease: .back)
+        add("Флип вертикальный", .flip(vertical: true), .flip3d, ease: .back)
 
-        // Искажения
-        add("Вихрь ↻", .twirl(cw: true, strength: 3), .distort)
-        add("Вихрь ↺ сильный", .twirl(cw: false, strength: 8), .distort)
-        add("Выпуклость", .bump(sign: 1), .distort)
-        add("Вогнутость", .bump(sign: -1), .distort)
-        add("Сжатие", .pinch(sign: 1), .distort)
-        add("Растяжение", .pinch(sign: -1), .distort)
-        add("Пиксели", .mosaic(.pixel, strength: 1.4), .distort)
-        add("Соты", .mosaic(.hex, strength: 1.4), .distort)
-        add("Кристаллы", .mosaic(.crystal, strength: 1.4), .distort)
-        add("Вихрь + рывок", .twirl(cw: true, strength: 3), .distort, fx: .zoomBlur)
+        // ✨ Свет, Вспышки и Золото
+        add("Белая вспышка 🔥", .dissolve, .light, fx: .flash, ease: .snap)
+        add("Золотая вспышка ✨", .dissolve, .light, fx: .goldFlash, ease: .snap)
+        add("Неоновая вспышка 💎", .dissolve, .light, fx: .cyberpunk, ease: .snap)
+        add("Зум + Вспышка", .zoom(inward: true, strength: 0.6), .light, fx: .flash, ease: .snap)
+        add("Рывок + Золото", .push(.right), .light, fx: .goldFlash, ease: .snap)
 
-        // Глитч
-        add("Глитч RGB", .dissolve, .glitch, fx: .rgb)
-        add("Тряска", .dissolve, .glitch, fx: .shake)
-        add("Сдвиг ← + RGB", .push(.left), .glitch, fx: .rgb)
-        add("Сдвиг → + тряска", .push(.right), .glitch, fx: .shake)
-        add("Пиксели + RGB", .mosaic(.pixel, strength: 1.4), .glitch, fx: .rgb)
-        add("Вихрь + RGB", .twirl(cw: true, strength: 3), .glitch, fx: .rgb)
-        add("Куб + RGB", .cube(left: false), .glitch, fx: .rgb)
-        add("Жалюзи + тряска", .blinds(count: 16, angle: 0, soft: 0.1), .glitch, fx: .shake)
-        add("Зум + RGB", .zoom(inward: true, strength: 0.5), .glitch, fx: .rgb)
+        // 💧 Фейды и Мягкие переходы
+        add("Шелковый фейд", .dissolve, .fade, ease: .smooth)
+        add("Кинематографичный ч/ч", .dip(CIColor(red: 0, green: 0, blue: 0)), .fade, ease: .smooth)
+        add("Молочный фейд (white)", .dip(CIColor(red: 1, green: 1, blue: 1)), .fade, ease: .smooth)
+        add("Золотой фейд престиж", .dip(gold), .fade, ease: .smooth)
+        add("Неоновый синий фейд", .dip(neonCyan), .fade, ease: .smooth)
+        add("Дымка с размытием", .dissolve, .fade, fx: .blur, ease: .smooth)
 
-        // Свет
-        add("Вспышка", .dissolve, .light, fx: .flash)
-        add("Золотая вспышка", .dissolve, .light, fx: .goldFlash)
-        add("Зум-вспышка", .zoom(inward: true, strength: 0.5), .light, fx: .flash)
-        add("Сдвиг + вспышка", .push(.left), .light, fx: .flash)
-        add("Круг + вспышка", .iris(inward: false, scaleX: 1, soft: 0.4, cx: 0.5, cy: 0.5), .light, fx: .flash)
-        add("Вихрь + золото", .twirl(cw: true, strength: 3), .light, fx: .goldFlash)
-        add("Шторка + золото", .wipe(angle: 0, soft: 0.5), .light, fx: .goldFlash)
-        add("Цветной вихрь", .twirl(cw: false, strength: 3), .light, fx: .hue)
-        add("Вращение + вспышка", .spin(cw: true, angle: .pi / 2), .light, fx: .flash)
         return list
     }
 }

@@ -4,7 +4,7 @@ import UIKit
 import CoreImage
 
 // =====================================================================
-// MARK: - Transition renderer
+// MARK: - Transition renderer (High-End CoreImage Engine)
 // =====================================================================
 
 enum TransitionRenderer {
@@ -74,7 +74,7 @@ enum TransitionRenderer {
 
     private static func vec(_ p: CGPoint) -> CIVector { CIVector(x: p.x, y: p.y) }
 
-    // MARK: Mask fields (поле «когда открывать этот пиксель»: 0 — сразу, 1 — в самом конце)
+    // MARK: Mask fields
 
     private static func threshold(_ g: CIImage, e: CGFloat, soft: CGFloat, _ r: CGRect) -> CIImage {
         let s = max(0.001, soft)
@@ -150,8 +150,8 @@ enum TransitionRenderer {
             "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)
         ])
         if grain > 1 {
-            if !cloud { g = g.samplingNearest() }          // блоки
-            g = g.transformed(by: CGAffineTransform(scaleX: grain, y: grain))   // билинейно → «облака»
+            if !cloud { g = g.samplingNearest() }
+            g = g.transformed(by: CGAffineTransform(scaleX: grain, y: grain))
         }
         if cloud {
             let k: CGFloat = 1.8
@@ -178,32 +178,24 @@ enum TransitionRenderer {
         let fallback = crossfade(from, to, ec)
 
         switch base {
-
-        case .dissolve:
-            return fallback
-
+        case .dissolve: return fallback
         case .dip(let color):
             let bg = solid(color, rect)
             return ec < 0.5 ? opacity(from, 1 - 2 * ec).composited(over: bg)
                             : opacity(to, 2 * ec - 1).composited(over: bg)
-
         case .push(let d):
             let v = d.vector
             return move(to, v.x * W * (e - 1), v.y * H * (e - 1))
                 .composited(over: move(from, v.x * W * e, v.y * H * e))
-
         case .cover(let d):
             let v = d.vector
             return move(to, v.x * W * (e - 1), v.y * H * (e - 1)).composited(over: from)
-
         case .reveal(let d):
             let v = d.vector
             return move(from, v.x * W * e, v.y * H * e).composited(over: to)
-
         case .wipe(let angle, let soft):
             guard let g = linearField(angle: angle, rect) else { return fallback }
             return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: soft, rect), rect)
-
         case .iris(let inward, let sx, let soft, let cx, let cy):
             let center = CGPoint(x: cx * W, y: cy * H)
             var R: CGFloat = 0
@@ -218,28 +210,20 @@ enum TransitionRenderer {
                 g = g.transformed(by: t)
             }
             return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: soft, rect), rect)
-
         case .blinds(let count, let angle, let soft):
             guard let g = stripeField(halfWidth: W / CGFloat(2 * count), angle: angle, rect) else { return fallback }
             return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: soft, rect), rect)
-
         case .grid(let cells, let diagonal, let sweep):
             let half = W / CGFloat(2 * cells)
             let rot: CGFloat = diagonal ? .pi / 4 : 0
             guard let gx = stripeField(halfWidth: half, angle: rot, rect),
                   let gy = stripeField(halfWidth: half, angle: rot + .pi / 2, rect) else { return fallback }
             var g = gx.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: gy]).cropped(to: rect)
-            if sweep == 1, let lin = linearField(angle: 0, rect) {
-                g = crossfade(g, lin, 0.5)
-            } else if sweep == 2, let rad = radialField(center: c, radius: hypot(W, H) / 2, invert: false, rect) {
-                g = crossfade(g, rad, 0.5)
-            }
+            if sweep == 1, let lin = linearField(angle: 0, rect) { g = crossfade(g, lin, 0.5) }
             return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: 0.12, rect), rect)
-
         case .noise(let grain, let cloud, let soft):
             guard let g = noiseField(grain: grain, cloud: cloud, rect) else { return fallback }
             return revealWithMask(to, over: from, mask: threshold(g, e: ec, soft: soft, rect), rect)
-
         case .slices(let count, let vertical):
             var acc = to
             for k in 0..<count {
@@ -258,7 +242,6 @@ enum TransitionRenderer {
                 acc = move(from.cropped(to: strip), dx, dy).composited(over: acc)
             }
             return acc
-
         case .doors(let vertical, let open):
             let src = open ? from : to
             let bg = open ? to : from
@@ -272,7 +255,6 @@ enum TransitionRenderer {
                 let u = move(src.cropped(to: CGRect(x: 0, y: H / 2, width: W, height: H / 2)), 0, H / 2 * k)
                 return b.composited(over: u.composited(over: bg))
             }
-
         case .zoom(let inward, let s):
             if inward {
                 return crossfade(scaled(from, 1 + s * ec, rect), scaled(to, 1 + s * (1 - ec), rect), ec)
@@ -281,19 +263,16 @@ enum TransitionRenderer {
                 let top = opacity(scaled(from, 1 - 0.8 * s * ec, rect), 1 - ec)
                 return top.composited(over: under)
             }
-
         case .spin(let cw, let angle):
             let sign: CGFloat = cw ? -1 : 1
             let f = rotated(from, angle: sign * angle * ec, scale: 1 + 0.6 * ec, rect)
             let t = rotated(to, angle: -sign * angle * (1 - ec), scale: 1 + 0.6 * (1 - ec), rect)
             return crossfade(f.composited(over: black(rect)), t.composited(over: black(rect)), ec)
-
         case .flip(let vertical):
             let useFrom = ec < 0.5
             let img = useFrom ? from : to
             let k = abs(cos((useFrom ? ec : (1 - ec)) * .pi))
             return vertical ? scaledXY(img, 1, k, rect) : scaledXY(img, k, 1, rect)
-
         case .cube(let left):
             func cubeLeft(_ a: CIImage, _ b: CIImage) -> CIImage {
                 let cy = H / 2
@@ -319,7 +298,6 @@ enum TransitionRenderer {
                 img.transformed(by: CGAffineTransform(scaleX: -1, y: 1).concatenating(CGAffineTransform(translationX: W, y: 0)))
             }
             return left ? cubeLeft(from, to) : flipX(cubeLeft(flipX(from), flipX(to)))
-
         case .twirl(let cw, let s):
             let sign: CGFloat = cw ? 1 : -1
             let R = hypot(W, H) * 0.6
@@ -329,7 +307,6 @@ enum TransitionRenderer {
                 ])?.cropped(to: rect) ?? img
             }
             return crossfade(tw(from, sign * s * ec), tw(to, -sign * s * (1 - ec)), ec)
-
         case .bump(let sign):
             let R = min(W, H) * 0.7
             func bp(_ img: CIImage, _ a: CGFloat) -> CIImage {
@@ -338,7 +315,6 @@ enum TransitionRenderer {
                 ])?.cropped(to: rect) ?? img
             }
             return crossfade(bp(from, sign * 1.6 * ec), bp(to, sign * 1.6 * (1 - ec)), ec)
-
         case .pinch(let sign):
             let R = min(W, H) * 0.8
             func pn(_ img: CIImage, _ a: CGFloat) -> CIImage {
@@ -347,7 +323,6 @@ enum TransitionRenderer {
                 ])?.cropped(to: rect) ?? img
             }
             return crossfade(pn(from, sign * 1.5 * ec), pn(to, sign * 1.5 * (1 - ec)), ec)
-
         case .mosaic(let kind, let strength):
             let amount = sin(ec * .pi) * strength * min(W, H) * 0.06
             func mo(_ img: CIImage) -> CIImage {
@@ -365,11 +340,11 @@ enum TransitionRenderer {
         }
     }
 
-    // MARK: Post effects
+    // MARK: Post effects (Ultra-Modern CapCut / TikTok VFX)
 
     private static func applyFx(_ fx: Fx, _ img: CIImage, t: CGFloat, rect: CGRect) -> CIImage {
         let W = rect.width, H = rect.height
-        let s = sin(clamp01(t) * .pi)       // 0 → 1 → 0
+        let s = sin(clamp01(t) * .pi)
         guard s > 0.001 else { return img }
 
         func addColor(_ c: CIColor, _ amount: CGFloat) -> CIImage {
@@ -380,15 +355,15 @@ enum TransitionRenderer {
         switch fx {
         case .none:
             return img
-
         case .blur:
-            return blurred(img, sigma: s * min(W, H) * 0.025, rect)
-
-        case .zoomPulse:
-            return scaled(img, 1 + 0.18 * s, rect)
-
+            return blurred(img, sigma: s * min(W, H) * 0.03, rect)
+        case .zoomBlur:
+            let amount = s * 70
+            return ciFilter("CIZoomBlur", img.clampedToExtent(), [
+                "inputCenter": CIVector(x: rect.midX, y: rect.midY), "inputAmount": amount
+            ])?.cropped(to: rect) ?? img
         case .rgb:
-            let d = s * W * 0.03
+            let d = s * W * 0.045
             func channel(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CIImage {
                 img.applyingFilter("CIColorMatrix", parameters: [
                     "inputRVector": CIVector(x: r, y: 0, z: 0, w: 0),
@@ -403,33 +378,24 @@ enum TransitionRenderer {
             let blue = move(channel(0, 0, 1), -d, 0)
             let rg = green.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: red])
             return blue.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: rg]).cropped(to: rect)
-
         case .shake:
-            let big = scaled(img, 1.07, rect)
-            return move(big, sin(t * 45) * s * W * 0.03, cos(t * 33) * s * H * 0.012)
-
+            let big = scaled(img, 1.08, rect)
+            return move(big, sin(t * 60) * s * W * 0.035, cos(t * 45) * s * H * 0.015)
         case .flash:
             return addColor(CIColor(red: 1, green: 1, blue: 1), s * s * 0.95)
-
         case .goldFlash:
             return addColor(CIColor(red: 1, green: 0.78, blue: 0.35), s * s * 0.9)
-
-        case .hue:
-            return img.applyingFilter("CIHueAdjustment", parameters: [kCIInputAngleKey: s * 3.0])
-
-        case .saturate:
-            return img.applyingFilter("CIColorControls", parameters: [
-                kCIInputSaturationKey: 1 + 1.6 * s, kCIInputContrastKey: 1 + 0.2 * s
-            ])
-
+        case .cyberpunk:
+            let cyan = CIColor(red: 0, green: 0.8, blue: 1)
+            let flashed = addColor(cyan, s * 0.6)
+            return ciFilter("CIHueAdjustment", flashed.clampedToExtent(), [kCIInputAngleKey: s * 1.5])?.cropped(to: rect) ?? flashed
+        case .chromatic:
+            let d = s * W * 0.06
+            return ciFilter("CIZoomBlur", img.clampedToExtent(), [
+                "inputCenter": CIVector(x: rect.midX + sin(t*20)*d, y: rect.midY), "inputAmount": s * 50
+            ])?.cropped(to: rect) ?? img
         case .tilt:
-            return rotated(img, angle: s * 0.12, scale: 1 + 0.15 * s, rect)
-
-        case .zoomBlur:
-            let blurredImg = ciFilter("CIZoomBlur", img.clampedToExtent(), [
-                "inputCenter": CIVector(x: rect.midX, y: rect.midY), "inputAmount": s * 45
-            ])?.cropped(to: rect)
-            return blurredImg ?? img
+            return rotated(img, angle: s * 0.15, scale: 1 + 0.18 * s, rect)
         }
     }
 }
