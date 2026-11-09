@@ -71,7 +71,8 @@ extension ViewController {
         var items = [PanelItem(title: "Оригинал", symbol: filterPreviews[0] == nil ? "camera.filters" : nil, image: filterPreviews[0])]
         for id in ids {
             let name = FilterCatalog.preset(id)?.name ?? ""
-            items.append(PanelItem(title: name, symbol: filterPreviews[id] == nil ? "camera.filters" : nil, image: filterPreviews[id]))
+            items.append(PanelItem(title: name, symbol: filterPreviews[id] == nil ? "camera.filters" : nil,
+                                   image: filterPreviews[id], favorite: FilterFavorites.contains(id)))
         }
         let cur = clips[i].filterID
         let sel: Int? = cur == 0 ? 0 : ids.firstIndex(of: cur).map { $0 + 1 }
@@ -207,12 +208,24 @@ extension ViewController {
     }
 
     func toggleFavorite(_ index: Int) {
-        guard activePanel == .transition, index >= 2 else { return }
-        let list = TransitionCatalog.list(transitionCategory)
-        guard index - 2 < list.count else { return }
-        let nowFav = TransitionFavorites.toggle(list[index - 2].id)
-        showToast(nowFav ? "Добавлено в избранное ♥" : "Убрано из избранного")
-        refreshActivePanel()
+        switch activePanel {
+        case .transition?:
+            guard index >= 2 else { return }
+            let list = TransitionCatalog.list(transitionCategory)
+            guard index - 2 < list.count else { return }
+            let nowFav = TransitionFavorites.toggle(list[index - 2].id)
+            showToast(nowFav ? "Добавлено в избранное ♥" : "Убрано из избранного")
+            refreshActivePanel()
+        case .filter?:
+            guard index >= 1 else { return }   // 0 — «Оригинал»
+            let ids = FilterCatalog.ids(for: filterCategory)
+            guard index - 1 < ids.count else { return }
+            let nowFav = FilterFavorites.toggle(ids[index - 1])
+            showToast(nowFav ? "Фильтр добавлен в избранное ♥" : "Убрано из избранного")
+            refreshActivePanel()
+        default:
+            break
+        }
     }
 
     func handlePanelExtra() {

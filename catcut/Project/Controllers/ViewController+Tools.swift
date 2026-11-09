@@ -87,7 +87,7 @@ extension ViewController {
         openPanel(.transition)
     }
 
-    // MARK: Split / delete / duplicate (работают с той дорожкой, на которой фокус)
+    // MARK: Split / delete / duplicate
 
     func splitAtPlayhead() {
         guard requireClips() else { return }
@@ -179,7 +179,7 @@ extension ViewController {
         first.transitionID = 0
         first.fadeOut = 0
 
-        var second = clip   // у второй половины свой id → свои независимые фильтр/переход/скорость/звук
+        var second = clip
         second.id = UUID()
         second.sourceRange = CMTimeRange(start: clip.sourceRange.start + srcOffset,
                                          duration: clip.sourceRange.duration - srcOffset)
@@ -279,6 +279,15 @@ extension ViewController {
         guard i < clips.count else { return }
         pushUndo()
         clips[i].sourceRange = range
+        
+        // Корректируем длину перехода, если клип стал слишком коротким
+        if i < clips.count - 1, clips[i].transitionID != 0 {
+            let clipDur = range.duration.secs
+            if clips[i].transitionDuration > clipDur {
+                clips[i].transitionDuration = max(0.2, clipDur - 0.1)
+            }
+        }
+        
         clearSelection()
         selectedClipIndex = i
         filterPreviewClipID = nil

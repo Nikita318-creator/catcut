@@ -254,11 +254,12 @@ extension Adjustments {
 // =====================================================================
 
 enum FilterCategory: Int, CaseIterable {
-    case all, soft, cinema, portrait, retro, bw, vivid
+    case all, favorites, soft, cinema, portrait, retro, bw, vivid
 
     var title: String {
         switch self {
         case .all: return "Все"
+        case .favorites: return "♥ Избранное"
         case .soft: return "Нежные"
         case .cinema: return "Кино"
         case .portrait: return "Портрет"
@@ -351,7 +352,14 @@ enum FilterCatalog {
     }
 
     static func ids(for category: FilterCategory) -> [Int] {
-        all.enumerated().filter { category == .all || $0.element.category == category }.map { $0.offset + 1 }
+        switch category {
+        case .all:
+            return Array(1...max(1, all.count)).filter { $0 <= all.count }
+        case .favorites:
+            return all.indices.map { $0 + 1 }.filter { FilterFavorites.contains($0) }
+        default:
+            return all.enumerated().filter { $0.element.category == category }.map { $0.offset + 1 }
+        }
     }
 }
 

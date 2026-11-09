@@ -347,11 +347,18 @@ final class ViewController: UIViewController {
             self.reloadTimeline()
             self.openPanel(.transition)
         }
+        // Фикс 1: Живой предпросмотр кадра в реальном времени при перетягивании края обрезки
+        timelineView.onClipTrimming = { [weak self] seconds in
+            self?.seekTo(ticks(seconds))
+            self?.updateTimeLabel(seconds)
+            self?.updateTextBox()
+        }
+        timelineView.onClipTrimmed = { [weak self] i, range in self?.commitClipTrim(i, range) }
         timelineView.onClipTrimmed = { [weak self] i, range in self?.commitClipTrim(i, range) }
         timelineView.onTextTimeChanged = { [weak self] id, s, d in self?.commitTextTime(id, start: s, duration: d) }
         timelineView.onAudioTimeChanged = { [weak self] id, s, off, d in self?.commitAudioTime(id, start: s, offset: off, duration: d) }
         timelineView.onNeedHeight = { [weak self] h in self?.setTimelineHeight(h) }
-
+        
         panel.onClose = { [weak self] in self?.closePanel() }
         panel.onSelect = { [weak self] index in self?.handlePanelSelect(index) }
         panel.onChip = { [weak self] index in
@@ -371,13 +378,10 @@ final class ViewController: UIViewController {
         }
         panel.onExtra = { [weak self] in self?.handlePanelExtra() }
         panel.onFavorite = { [weak self] index in self?.toggleFavorite(index) }
-        panel.onSliderBegan = { [weak self] in self?.sliderBegan() }
-        panel.onSliderChanged = { [weak self] v in self?.sliderChanged(v) }
-        panel.onSliderEnded = { [weak self] v in self?.sliderEnded(v) }
         panel.previewProvider = { key, isValid, completion in
             TransitionPreviewStore.shared.image(for: key, isValid: isValid, completion: completion)
         }
-
+        
         ThumbnailStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
         WaveformStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
     }

@@ -26,7 +26,7 @@ final class RulerView: UIView {
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
         let side = bounds.width / 2
-        let labelEvery = pps >= 90 ? 1 : (pps >= 45 ? 2 : 5)
+        let labelEvery = pps >= 90 ? 1 : (pps >= 45 ? 2 : (pps >= 26 ? 5 : (pps >= 12 ? 10 : 30)))
         let first = max(0, Int(floor((offsetX - side) / pps)) - 1)
         let last = Int(ceil((offsetX + bounds.width - side) / pps)) + 1
         guard last >= first else { return }
@@ -165,12 +165,16 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
 
     static let minHeight: CGFloat = 166
 
-    private let pps: CGFloat = 64               // точек на секунду
+    private var pps: CGFloat = 64               // точек на секунду (меняется щипком)
+    private let minPPS: CGFloat = 4           // максимально «сжатая» лента
+    private let maxPPS: CGFloat = 240           // максимально «растянутая» лента
+    private var pinchStartPPS: CGFloat = 64
+    private var pinch: UIPinchGestureRecognizer!
     private let clipTop: CGFloat = 26
     private let clipHeight: CGFloat = 56
     private let laneHeight: CGFloat = 26
     private let laneStep: CGFloat = 30
-    private let handleZone: CGFloat = 24
+    private let handleZone: CGFloat = 28
     private let minDur: Double = 0.3
 
     private let scrollView = TimelineScrollView()
@@ -196,6 +200,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     var onTextTimeChanged: ((UUID, Double, Double) -> Void)?
     var onAudioTimeChanged: ((UUID, Double, Double, Double) -> Void)?
     var onNeedHeight: ((CGFloat) -> Void)?
+    var onClipTrimming: ((Double) -> Void)?
 
     private var clips: [VideoClip] = []
     private var layout = TimelineLayout(clips: [])
@@ -210,6 +215,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     private var clipFrames: [CGRect] = []
     private var clipViews: [ClipTileView] = []
     private var transitionFrames: [CGRect] = []
+    private var transitionViews: [UIView] = []
     private var textItems: [Item] = []
     private var audioItems: [Item] = []
     private var laneRows: [(lane: TimelineLane, rect: CGRect)] = []
@@ -230,14 +236,15 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     }
     private struct DragState {
         var kind: DragKind
-        var startX: CGFloat
+        var startTouchX: CGFloat
         var view: UIView
         var origFrame: CGRect
         var moved = false
         var start: Double = 0
         var duration: Double = 0
         var offset: Double = 0
-        var srcRange: CMTimeRange?
+        var initialSrcRange: CMTimeRange?
+        var currentSrcRange: CMTimeRange?
     }
     private var drag: DragState?
 
@@ -292,7 +299,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             make.size.equalTo(10)
         }
 
-        // Кнопки-«метки» дорожек (не скроллятся): тап = перенести фокус на дорожку
         let defs: [(TimelineLane, String)] = [(.video, "film"), (.text, "textformat"), (.audio, "music.note")]
         for (lane, symbol) in defs {
             let b = UIButton(type: .system)
@@ -315,6 +321,35 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         dragPan.maximumNumberOfTouches = 1
         dragPan.delegate = self
         contentView.addGestureRecognizer(dragPan)
+
+        // Щипок двумя пальцами по любой дорожке — масштаб ленты
+        pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        pinch.delegate = self
+        addGestureRecognizer(pinch)
+    }
+
+    @objc private func handlePinch(_ g: UIPinchGestureRecognizer) {
+        switch g.state {
+        case .began:
+            pinchStartPPS = pps
+            scrollView.isScrollEnabled = false   // пока щиплем — лента не скроллится
+        case .changed:
+            let target = min(maxPPS, max(minPPS, pinchStartPPS * g.scale))
+            guard abs(target - pps) > 0.4 else { return }
+            pps = target
+            // Лента масштабируется вокруг красной палки (она всегда по центру)
+            rebuildContent()
+            setPlayhead(time: lastPlayheadTime, force: true)
+        case .ended, .cancelled, .failed:
+            scrollView.isScrollEnabled = true
+        default:
+            break
+        }
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        g === pinch || other === pinch
     }
 
     @objc private func chipTapped(_ b: UIButton) {
@@ -331,10 +366,10 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    // MARK: Public
-
     func reload(clips: [VideoClip], layout: TimelineLayout, texts: [TextOverlay], audios: [AudioClip],
                 selectedClip: Int?, selectedText: UUID?, selectedAudio: UUID?, focus: TimelineLane) {
+        // Пока палец тянет край — не пересобираем ленту (иначе вьюха под пальцем пропадёт)
+        if drag != nil { return }
         self.clips = clips
         self.layout = layout
         self.texts = texts
@@ -347,9 +382,10 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         setPlayhead(time: lastPlayheadTime, force: true)
     }
 
-    /// Двигаем красную палку (на самом деле прокручиваем ленту под ней).
     func setPlayhead(time: Double, force: Bool = false) {
         lastPlayheadTime = time
+        // Во время перетаскивания края лента не должна «уезжать» из-под пальца
+        if drag != nil { return }
         if !force && isUserScrolling { return }
         isProgrammatic = true
         scrollView.contentOffset = CGPoint(x: CGFloat(max(0, min(time, totalSeconds))) * pps, y: 0)
@@ -357,8 +393,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         ruler.offsetX = scrollView.contentOffset.x
         ruler.setNeedsDisplay()
     }
-
-    // MARK: Build
 
     private func assignLanes(_ spans: [(Double, Double)]) -> (lane: [Int], count: Int) {
         let order = spans.indices.sorted { spans[$0].0 < spans[$1].0 }
@@ -387,9 +421,8 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         ruler.pps = pps
         ruler.total = totalSeconds
 
-        clipFrames = []; clipViews = []; transitionFrames = []; textItems = []; audioItems = []; laneRows = []
+        clipFrames = []; clipViews = []; transitionFrames = []; transitionViews = []; textItems = []; audioItems = []; laneRows = []
 
-        // Раскладка дорожек: текст и аудио видны ВСЕГДА (минимум по одной строке)
         let tl = assignLanes(texts.map { ($0.start, max($0.start + $0.duration, $0.start + 24 / Double(pps))) })
         let al = assignLanes(audios.map { ($0.start, $0.start + $0.duration) })
         let textRows = max(1, tl.count), audioRows = max(1, al.count)
@@ -422,7 +455,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         if texts.isEmpty { hint("Текст — нажмите «Текст» внизу", y: textBase) }
         if audios.isEmpty { hint("Аудио — нажмите «Аудио» внизу", y: audioBase) }
 
-        // Метки дорожек слева
         let chipY: [TimelineLane: CGFloat] = [.video: clipTop + (clipHeight - 24) / 2, .text: textBase + 1, .audio: audioBase + 1]
         for (lane, b) in chips {
             let on = focus == lane
@@ -431,7 +463,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             b.tintColor = on ? .black : .white
         }
 
-        // Видео
+        // 1. Видео клипы отрисовываются первыми
         for (i, clip) in clips.enumerated() where i < layout.starts.count {
             let x = side + CGFloat(layout.starts[i].secs) * pps + 1
             let w = max(10, CGFloat(layout.durations[i].secs) * pps - 2)
@@ -442,7 +474,12 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             clipViews.append(tile)
         }
 
-        // Переходы
+        // Если выбран клип, выносим его наверх, чтобы его ручки выделения были на самом переднем плане
+        if let sel = selectedClip, sel < clipViews.count {
+            contentView.bringSubviewToFront(clipViews[sel])
+        }
+
+        // 2. Иконки переходов вырисовываем с аккуратным z-index, чтобы не перекрывать выделенные края
         if clips.count > 1 {
             for j in 0..<(clips.count - 1) {
                 let cx = side + CGFloat(layout.starts[j + 1].secs) * pps
@@ -463,6 +500,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
                 icon.frame = CGRect(x: 5, y: 5, width: 16, height: 16)
                 v.addSubview(icon)
                 contentView.addSubview(v)
+                transitionViews.append(v)
             }
         }
 
@@ -518,8 +556,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    // MARK: Taps
-
     @objc private func handleTap(_ g: UITapGestureRecognizer) {
         let p = g.location(in: contentView)
 
@@ -535,7 +571,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             if i == selectedClip { onDeselectAll?() } else { onSelectClip?(i) }
             return
         }
-        // Тап по пустому месту дорожки = перенести фокус на эту дорожку
         for row in laneRows where row.rect.contains(p) {
             onFocusLane?(row.lane)
             return
@@ -543,15 +578,13 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         onDeselectAll?()
     }
 
-    // MARK: Drag / trim  (приоритет у ручек и выбранных полосок — скролл в этих местах отключён)
-
     private func hitTarget(at p: CGPoint) -> DragKind? {
         if let s = selectedClip, s < clipFrames.count {
             let f = clipFrames[s]
-            let hz = min(handleZone, f.width / 2.5)
-            if p.y >= f.minY - 4 && p.y <= f.maxY + 4 {
-                if p.x >= f.minX - 10 && p.x <= f.minX + hz { return .clipLeft(s) }
-                if p.x <= f.maxX + 10 && p.x >= f.maxX - hz { return .clipRight(s) }
+            let hz = min(handleZone, max(18, f.width / 2))
+            if p.y >= f.minY - 6 && p.y <= f.maxY + 6 {
+                if p.x >= f.minX - 14 && p.x <= f.minX + hz { return .clipLeft(s) }
+                if p.x <= f.maxX + 14 && p.x >= f.maxX - hz { return .clipRight(s) }
             }
         }
         if let id = selectedText, let item = textItems.first(where: { $0.id == id }),
@@ -572,6 +605,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     }
 
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        if g === pinch { return drag == nil }
         if g === dragPan {
             return hitTarget(at: scrollView.touchDownPoint) != nil
         }
@@ -579,12 +613,15 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     }
 
     @objc private func handleDrag(_ g: UIPanGestureRecognizer) {
-        let x = g.location(in: contentView).x
+        // Координата пальца — в НЕподвижной системе (self), а не в contentView,
+        // иначе любое смещение ленты даёт обратную связь и обрезка «улетает».
+        let x = g.location(in: self).x
         switch g.state {
         case .began:
             let p = scrollView.touchDownPoint
             if let kind = hitTarget(at: p) {
-                beginDrag(kind, x: p.x)
+                let startX = contentView.convert(p, to: self).x
+                beginDrag(kind, x: startX)
                 updateDrag(x: x)
             }
         case .changed:
@@ -600,47 +637,63 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
 
     private func beginDrag(_ kind: DragKind, x: CGFloat) {
         var view: UIView?
+        var srcR: CMTimeRange?
         switch kind {
         case .clipLeft(let i), .clipRight(let i):
-            view = i < clipViews.count ? clipViews[i] : nil
+            if i < clipViews.count {
+                view = clipViews[i]
+                srcR = clips[i].sourceRange
+            }
         case .textMove(let id), .textLeft(let id), .textRight(let id):
             view = textItems.first { $0.id == id }?.view
         case .audioMove(let id), .audioLeft(let id), .audioRight(let id):
             view = audioItems.first { $0.id == id }?.view
         }
         guard let v = view else { return }
-        drag = DragState(kind: kind, startX: x, view: v, origFrame: v.frame)
+        drag = DragState(kind: kind, startTouchX: x, view: v, origFrame: v.frame, initialSrcRange: srcR, currentSrcRange: srcR)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         v.superview?.bringSubviewToFront(v)
     }
 
     private func updateDrag(x: CGFloat) {
         guard var d = drag else { return }
-        if abs(x - d.startX) > 3 { d.moved = true }
-        let dx = Double((x - d.startX) / pps)
+        if abs(x - d.startTouchX) > 2 { d.moved = true }
+        
+        let deltaSecs = Double((x - d.startTouchX) / pps)
         let total = totalSeconds
         let side = bounds.width / 2
-
+        
         switch d.kind {
         case .clipLeft(let i), .clipRight(let i):
-            guard i < clips.count else { break }
+            guard i < clips.count, let origR = d.initialSrcRange else { break }
             let c = clips[i]
-            let s = Double(c.speed)
-            let s0 = c.sourceRange.start.secs, e0 = c.sourceRange.end.secs
+            let speed = Double(c.speed)
+            let s0 = origR.start.secs
+            let e0 = origR.end.secs
             let assetDur = floor(c.asset.duration.secs * Double(kTimescale)) / Double(kTimescale)
+            
             var ns = s0, ne = e0
             var isLeft = false
             if case .clipLeft = d.kind { isLeft = true }
+            
             if isLeft {
-                ns = min(max(0, s0 + dx * s), e0 - minDur * s)
+                ns = min(max(0, s0 + deltaSecs * speed), e0 - minDur * speed)
             } else {
-                ne = max(min(assetDur, e0 + dx * s), s0 + minDur * s)
+                ne = max(min(assetDur, e0 + deltaSecs * speed), s0 + minDur * speed)
             }
-            d.srcRange = CMTimeRange(start: ticks(ns), end: ticks(ne))
-            let w = max(10, CGFloat((ne - ns) / s) * pps - 2)
-            let xx = isLeft ? d.origFrame.maxX - w : d.origFrame.minX
+            
+            let newSrcRange = CMTimeRange(start: ticks(ns), end: ticks(ne))
+            d.currentSrcRange = newSrcRange
+            
+            let newDisplayDurSecs = (ne - ns) / speed
+            let w = max(12, CGFloat(newDisplayDurSecs) * pps)
+            let xx = isLeft ? (d.origFrame.maxX - w) : d.origFrame.minX
             d.view.frame = CGRect(x: xx, y: d.origFrame.minY, width: w, height: d.origFrame.height)
-
+            
+            let baseStart = layout.starts[i].secs
+            let currentCutSecs = isLeft ? (baseStart + (ns - s0) / speed) : (baseStart + (ne - s0) / speed)
+            onClipTrimming?(max(0, currentCutSecs))
+            
         case .textMove(let id), .textLeft(let id), .textRight(let id):
             guard let o = texts.first(where: { $0.id == id }) else { break }
             let s0 = o.start, e0 = o.start + o.duration
@@ -648,31 +701,30 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             switch d.kind {
             case .textMove:
                 let len = e0 - s0
-                ns = min(max(0, s0 + dx), max(0, total - len)); ne = ns + len
+                ns = min(max(0, s0 + deltaSecs), max(0, total - len)); ne = ns + len
             case .textLeft:
-                ns = min(max(0, s0 + dx), e0 - minDur)
+                ns = min(max(0, s0 + deltaSecs), e0 - minDur)
             default:
-                ne = max(min(total, e0 + dx), s0 + minDur)
+                ne = max(min(total, e0 + deltaSecs), s0 + minDur)
             }
             d.start = ns; d.duration = ne - ns
             d.view.frame = CGRect(x: side + CGFloat(ns) * pps, y: d.origFrame.minY,
                                   width: max(24, CGFloat(ne - ns) * pps), height: d.origFrame.height)
-
+            
         case .audioMove(let id), .audioLeft(let id), .audioRight(let id):
             guard let a = audios.first(where: { $0.id == id }) else { break }
             let s0 = a.start, e0 = a.start + a.duration
             var ns = s0, ne = e0, off = a.sourceOffset
             switch d.kind {
             case .audioMove:
-                ns = min(max(0, s0 + dx), max(0, total - a.duration)); ne = ns + a.duration
+                ns = min(max(0, s0 + deltaSecs), max(0, total - a.duration)); ne = ns + a.duration
             case .audioLeft:
-                // тянуть влево можно только до начала исходного файла
                 let minStart = max(0, s0 - a.sourceOffset)
-                ns = min(max(minStart, s0 + dx), e0 - minDur)
+                ns = min(max(minStart, s0 + deltaSecs), e0 - minDur)
                 off = a.sourceOffset + (ns - s0)
             default:
                 let maxEnd = min(total, s0 + (a.sourceDuration - a.sourceOffset))
-                ne = max(min(maxEnd, e0 + dx), s0 + minDur)
+                ne = max(min(maxEnd, e0 + deltaSecs), s0 + minDur)
             }
             d.start = ns; d.duration = ne - ns; d.offset = off
             d.view.frame = CGRect(x: side + CGFloat(ns) * pps, y: d.origFrame.minY,
@@ -695,15 +747,13 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         }
         switch d.kind {
         case .clipLeft(let i), .clipRight(let i):
-            if let r = d.srcRange { onClipTrimmed?(i, r) }
+            if let r = d.currentSrcRange { onClipTrimmed?(i, r) }
         case .textMove(let id), .textLeft(let id), .textRight(let id):
             onTextTimeChanged?(id, d.start, d.duration)
         case .audioMove(let id), .audioLeft(let id), .audioRight(let id):
             onAudioTimeChanged?(id, d.start, d.offset, d.duration)
         }
     }
-
-    // MARK: UIScrollViewDelegate
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         onScrubBegan?()
@@ -712,7 +762,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     func scrollViewDidScroll(_ sv: UIScrollView) {
         ruler.offsetX = sv.contentOffset.x
         ruler.setNeedsDisplay()
-        // Только если крутит человек — иначе получим бесконечный цикл «плеер ↔ лента».
         guard !isProgrammatic, sv.isTracking || sv.isDragging || sv.isDecelerating else { return }
         let t = max(0, min(totalSeconds, Double(sv.contentOffset.x / pps)))
         lastPlayheadTime = t
