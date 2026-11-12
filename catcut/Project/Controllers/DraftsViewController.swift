@@ -113,7 +113,13 @@ final class DraftsViewController: UIViewController, UITableViewDataSource, UITab
     }
 
     private func reload() {
-        drafts = DraftStore.shared.list()
+        let allDrafts = DraftStore.shared.list()
+        // Сортировка: автосохраненный всегда первый (isAutoSaved == true), остальные по дате (updated)
+        drafts = allDrafts.sorted { d1, d2 in
+            if d1.isAutoSaved == true && d2.isAutoSaved != true { return true }
+            if d1.isAutoSaved != true && d2.isAutoSaved == true { return false }
+            return d1.updated > d2.updated
+        }
         emptyLabel.isHidden = !drafts.isEmpty
         tableView.reloadData()
     }
@@ -130,7 +136,10 @@ final class DraftsViewController: UIViewController, UITableViewDataSource, UITab
         let d = drafts[indexPath.row]
         cell.cover.image = UIImage(contentsOfFile: DraftStore.shared.coverURL(d.id).path)
         let isCurrent = d.id == currentDraftID
-        cell.titleLabel.text = (isCurrent ? "● " : "") + formatter.string(from: d.updated)
+        
+        let prefix = (d.isAutoSaved == true ? "💾 [Авто] " : "") + (isCurrent ? "● " : "")
+        cell.titleLabel.text = prefix + formatter.string(from: d.updated)
+        
         let total = Int(d.duration)
         cell.subLabel.text = String(format: "%d клип., %d:%02d", d.clips.count, total / 60, total % 60)
             + (d.texts.isEmpty ? "" : " · текст \(d.texts.count)")

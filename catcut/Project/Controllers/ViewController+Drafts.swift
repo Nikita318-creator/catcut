@@ -13,37 +13,71 @@ extension ViewController {
 
     // MARK: Drafts
 
-    func makeDraft(id: UUID) -> Draft {
-        Draft(id: id, updated: Date(), duration: totalSeconds,
-              clips: clips.map { c in
-                  DraftClip(id: c.id, file: c.file, srcStart: c.sourceRange.start.secs,
-                            srcDuration: c.sourceRange.duration.secs, speed: c.speed, filterID: c.filterID,
-                            filterIntensity: c.filterIntensity, transitionID: c.transitionID,
-                            transitionDuration: c.transitionDuration, volume: c.volume,
-                            isImage: c.isImage, adjust: c.adjust, look: c.look, flipH: c.flipH, flipV: c.flipV,
-                            rotation: c.rotation, zoom: c.zoom, bgMode: c.bgMode, bgFile: c.bgFile, bgColor: c.bgColor,
-                            audioEffect: c.audioEffect, fadeIn: c.fadeIn, fadeOut: c.fadeOut)
-              },
-              texts: texts,
-              audios: audios.map { a in
-                  DraftAudio(id: a.id, file: a.file, title: a.title, start: a.start, sourceOffset: a.sourceOffset,
-                             duration: a.duration, volume: a.volume, effect: a.effect, fadeIn: a.fadeIn, fadeOut: a.fadeOut)
-              },
-              project: project)
+    func makeDraft(id: UUID, isAuto: Bool) -> Draft {
+        var draft = Draft(
+            id: id,
+            updated: Date(),
+            duration: totalSeconds,
+            clips: clips.map { c in
+                DraftClip(id: c.id, file: c.file, srcStart: c.sourceRange.start.secs,
+                          srcDuration: c.sourceRange.duration.secs, speed: c.speed, filterID: c.filterID,
+                          filterIntensity: c.filterIntensity, transitionID: c.transitionID,
+                          transitionDuration: c.transitionDuration, volume: c.volume,
+                          isImage: c.isImage, adjust: c.adjust, look: c.look, flipH: c.flipH, flipV: c.flipV,
+                          rotation: c.rotation, zoom: c.zoom, bgMode: c.bgMode, bgFile: c.bgFile, bgColor: c.bgColor,
+                          audioEffect: c.audioEffect, fadeIn: c.fadeIn, fadeOut: c.fadeOut)
+            },
+            texts: texts,
+            audios: audios.map { a in
+                DraftAudio(id: a.id, file: a.file, title: a.title, start: a.start, sourceOffset: a.sourceOffset,
+                           duration: a.duration, volume: a.volume, effect: a.effect, fadeIn: a.fadeIn, fadeOut: a.fadeOut)
+            },
+            project: project,
+            isAutoSaved: isAuto
+        )
+        return draft
     }
-
-    func saveDraft(silent: Bool) {
+    
+    func saveDraft(silent: Bool, isAuto: Bool = false) {
         guard !clips.isEmpty else { return }
-        let id = currentDraftID ?? UUID()
-        currentDraftID = id
+        
+        let id: UUID
+        if isAuto {
+            // Ищем существующий автосейв в хранилище, чтобы перезаписывать именно его,
+            // либо создаем уникальный ID для автосейва, если его еще не было.
+            let existingAuto = DraftStore.shared.list().first(where: { $0.isAutoSaved == true })
+            id = existingAuto?.id ?? UUID()
+        } else {
+            // Если юзер сохраняет вручную, а до этого мы были в режиме автосейва —
+            // можем отвязать текущий ID от автосейва или сохранить как полноценный черновик.
+            if let currentID = currentDraftID,
+               let current = DraftStore.shared.list().first(where: { $0.id == currentID }),
+               current.isAutoSaved == true {
+                // Превращаем текущий автосейв в обычный ручной черновик
+                var updatedDraft = current
+                updatedDraft.isAutoSaved = false
+                updatedDraft.updated = Date()
+                DraftStore.shared.save(updatedDraft, coverAsset: clips.first?.asset, coverTime: (clips.first?.sourceRange.start.secs ?? 0) + 0.05)
+                // И создаем новый ID для последующего автосейва
+                currentDraftID = UUID()
+            }
+            id = currentDraftID ?? UUID()
+            currentDraftID = id
+        }
+        
+        let draftToSave = makeDraft(id: id, isAuto: isAuto)
         let first = clips[0]
-        DraftStore.shared.save(makeDraft(id: id), coverAsset: first.asset, coverTime: first.sourceRange.start.secs + 0.05)
+        DraftStore.shared.save(draftToSave, coverAsset: first.asset, coverTime: first.sourceRange.start.secs + 0.05)
+        
         if !silent { showToast("Черновик сохранён") }
     }
-
+    
     @objc func didTapSaveDraft() {
         guard !clips.isEmpty else { showToast("Добавьте видео, чтобы сохранить черновик"); return }
-        saveDraft(silent: false)
+        // 1. Сохраняем вручную
+        saveDraft(silent: false, isAuto: false)
+        // 2. Сразу же перезаписываем/обновляем автосейв, не дожидаясь 10 сек
+        saveDraft(silent: true, isAuto: true)
     }
 
     @objc func didTapDrafts() {

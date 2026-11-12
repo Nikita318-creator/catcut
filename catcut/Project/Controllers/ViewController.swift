@@ -110,6 +110,9 @@ final class ViewController: UIViewController {
     var selectedText: TextOverlay? { texts.first { $0.id == selectedTextID } }
     var selectedAudio: AudioClip? { audios.first { $0.id == selectedAudioID } }
 
+    // Добавить в свойства ViewController:
+    var autoSaveTimer: Timer?
+    
     // MARK: Lifecycle
 
     override func viewDidLoad() {
@@ -125,6 +128,13 @@ final class ViewController: UIViewController {
         reloadTimeline()
         NotificationCenter.default.addObserver(self, selector: #selector(appWillResign),
                                                name: UIApplication.willResignActiveNotification, object: nil)
+        
+        if currentDraftID == nil {
+            let allDrafts = DraftStore.shared.list()
+            if let autoDraft = allDrafts.first(where: { $0.isAutoSaved == true }) {
+                loadDraft(autoDraft)
+            }
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -136,10 +146,34 @@ final class ViewController: UIViewController {
         updateTextBox()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        startAutoSaveTimer()
+    }
+
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopAutoSaveTimer()
         pausePlayback()
-        if presentedViewController == nil { saveDraft(silent: true) }
+        if presentedViewController == nil { saveDraft(silent: true, isAuto: false) }
+    }
+
+    func startAutoSaveTimer() {
+        autoSaveTimer?.invalidate()
+        autoSaveTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+            self?.performAutoSave()
+        }
+    }
+
+    func stopAutoSaveTimer() {
+        autoSaveTimer?.invalidate()
+        autoSaveTimer = nil
+    }
+
+    @objc func performAutoSave() {
+        guard !clips.isEmpty else { return }
+        // Автосейв сохраняем с фиксированным ID для автосохранения или обновляем текущий автосейв
+        saveDraft(silent: true, isAuto: true)
     }
 
     deinit {
