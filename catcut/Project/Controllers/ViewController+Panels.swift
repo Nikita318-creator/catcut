@@ -80,7 +80,7 @@ extension ViewController {
         panel.configure(title: "Фильтр · клип \(i + 1)", items: items, selected: sel,
                         slider: cur == 0 ? nil : cfg,
                         chips: FilterCategory.allCases.map { $0.title }, selectedChip: filterCategory.rawValue,
-                        keepScroll: keep)
+                        extra: cur == 0 ? nil : "Ко всем", keepScroll: keep)
     }
 
     func updateFilterPreviews() {
@@ -162,7 +162,8 @@ extension ViewController {
             def.min < 0 ? String(format: "%+.0f", Double($0) * 100) : String(format: "%.0f", Double($0) * 100)
         }
         panel.configure(title: "Цвет · клип \(i + 1)", items: items, selected: sel, slider: cfg,
-                        chips: ViewController.adjustDefs.map { $0.title }, selectedChip: adjustTab, keepScroll: keep)
+                        chips: ViewController.adjustDefs.map { $0.title }, selectedChip: adjustTab,
+                        extra: "Ко всем", keepScroll: keep)
     }
 
     func handleAdjustSelect(_ index: Int) {
@@ -232,6 +233,9 @@ extension ViewController {
         switch activePanel {
         case .transition?: applyTransitionToAll()
         case .background?: applyBackgroundToAll()
+        case .filter?: applyFilterToAll()
+        case .adjust?: applyAdjustToAll()
+        case .effects?: applyEffectsToAll()
         default: break
         }
     }
@@ -327,7 +331,8 @@ extension ViewController {
             ]
         }
         panel.configure(title: "Эффекты · клип \(i + 1)", items: items, selected: sel, slider: cfg,
-                        chips: ["Поворот", "Угол", "Масштаб", "Эффекты", "Время"], selectedChip: fxTab, keepScroll: keep)
+                        chips: ["Поворот", "Угол", "Масштаб", "Эффекты", "Время"], selectedChip: fxTab,
+                        extra: fxTab == 4 ? nil : "Ко всем", keepScroll: keep)
     }
 
     func mutateClip(_ f: (inout VideoClip) -> Void) {
@@ -527,6 +532,54 @@ extension ViewController {
         }
     }
 
+    func applyFilterToAll() {
+        guard let i = currentClipIndex() else { return }
+        pushUndo()
+        let filterID = clips[i].filterID
+        let intensity = clips[i].filterIntensity
+        for k in 0..<clips.count {
+            clips[k].filterID = filterID
+            clips[k].filterIntensity = intensity
+        }
+        refreshVideoComposition()
+        reloadTimeline()
+        showToast("Фильтр применён ко всем клипам")
+    }
+    
+    func applyAdjustToAll() {
+        guard let i = currentClipIndex() else { return }
+        pushUndo()
+        let adjust = clips[i].adjust
+        for k in 0..<clips.count {
+            clips[k].adjust = adjust
+        }
+        refreshVideoComposition()
+        reloadTimeline()
+        showToast("Цветокоррекция применена ко всем клипам")
+    }
+    
+    func applyEffectsToAll() {
+        guard let i = currentClipIndex() else { return }
+        pushUndo()
+        let src = clips[i]
+        for k in 0..<clips.count {
+            switch fxTab {
+            case 0, 1, 2:
+                clips[k].flipH = src.flipH
+                clips[k].flipV = src.flipV
+                clips[k].rotation = src.rotation
+                clips[k].zoom = src.zoom
+            case 3:
+                clips[k].look = src.look
+            default:
+                break
+            }
+        }
+        refreshVideoComposition()
+        reloadTimeline()
+        showToast("Эффекты применены ко всем клипам")
+    }
+    
     func applyBackgroundToAll() {
         guard let i = currentClipIndex() else { return }
         pushUndo()

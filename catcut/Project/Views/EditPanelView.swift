@@ -278,14 +278,26 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         if let chips = chips { chipsView.configure(titles: chips, selected: selectedChip) }
         extraButton.isHidden = (extra == nil)
         extraButton.setTitle(extra, for: .normal)
-
+        
+        // Перезагружаем данные и принудительно заставляем collectionView пересчитать layout
         collectionView.reloadData()
+        collectionView.layoutIfNeeded()
+        
         if !keepScroll {
-            collectionView.layoutIfNeeded()
-            if let s = selected, s < items.count {
-                collectionView.scrollToItem(at: IndexPath(item: s, section: 0), at: .centeredHorizontally, animated: false)
+            if let s = selected, s < items.count, s >= 0 {
+                // Безопасный скролл к выбранному элементу с проверкой границ
+                let maxPossibleIndex = max(0, items.count - 1)
+                let targetIndex = min(s, maxPossibleIndex)
+                collectionView.scrollToItem(at: IndexPath(item: targetIndex, section: 0), at: .centeredHorizontally, animated: false)
             } else {
+                // Если индекс недоступен, сбрасываем скролл в начало во избежание улета в бесконечность
                 collectionView.setContentOffset(.zero, animated: false)
+            }
+        } else {
+            // Даже при keepScroll проверяем, чтобы текущий offset не улетал за новый contentSize
+            let maxOffsetX = max(0, collectionView.contentSize.width - collectionView.bounds.width)
+            if collectionView.contentOffset.x > maxOffsetX {
+                collectionView.setContentOffset(CGPoint(x: maxOffsetX, y: 0), animated: false)
             }
         }
     }
