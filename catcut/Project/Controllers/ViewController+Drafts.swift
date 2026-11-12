@@ -104,7 +104,7 @@ extension ViewController {
         clearSelection()
         focusLane = .video
         undoStack = []
-        updateUndoButton()
+        updateUndoRedoButtons()
         currentDraftID = nil
         filterPreviewClipID = nil
         previewPairKey = nil
@@ -163,7 +163,7 @@ extension ViewController {
         clearSelection()
         focusLane = .video
         undoStack = []
-        updateUndoButton()
+        updateUndoRedoButtons()
         currentDraftID = d.id
         filterPreviewClipID = nil
         previewPairKey = nil

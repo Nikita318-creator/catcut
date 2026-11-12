@@ -47,6 +47,7 @@ final class ViewController: UIViewController {
     let timeLabel = UILabel()
     let playButton = UIButton(type: .system)
     let undoButton = UIButton(type: .system)
+    let redoButton = UIButton(type: .system)
     let timelineView = TimelineView()
     let bottomContainer = UIView()
     let panel = EditPanelView()
@@ -72,6 +73,7 @@ final class ViewController: UIViewController {
     var selectedTextID: UUID?
     var selectedAudioID: UUID?
     var undoStack: [Snapshot] = []
+    var redoStack: [Snapshot] = []
     var currentDraftID: UUID?
 
     var build: EditorBuild?
@@ -123,7 +125,7 @@ final class ViewController: UIViewController {
         setupLayout()
         setupPlayer()
         setupCallbacks()
-        updateUndoButton()
+        updateUndoRedoButtons()
         updateEmptyState()
         reloadTimeline()
         NotificationCenter.default.addObserver(self, selector: #selector(appWillResign),
@@ -194,31 +196,56 @@ final class ViewController: UIViewController {
         topBar.snp.makeConstraints { make in
             make.top.equalTo(view.safeAreaLayoutGuide)
             make.leading.trailing.equalToSuperview()
-            make.height.equalTo(44)
+            make.height.equalTo(52) // Чуем увеличение высоты для иконки с текстом
         }
 
+        // Кнопка сохранения в черновики с иконкой и подписью
         let saveButton = UIButton(type: .system)
-        saveButton.setImage(UIImage(systemName: "tray.and.arrow.down"), for: .normal)
+        var saveConfig = UIButton.Configuration.plain()
+        saveConfig.image = UIImage(systemName: "square.and.arrow.down.fill")
+        saveConfig.title = "Сохранить"
+        saveConfig.imagePlacement = .top
+        saveConfig.imagePadding = 2
+        saveConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 10, weight: .medium)
+            return outgoing
+        }
+        saveButton.configuration = saveConfig
         saveButton.tintColor = .white
         saveButton.addTarget(self, action: #selector(didTapSaveDraft), for: .touchUpInside)
         topBar.addSubview(saveButton)
         saveButton.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(8)
+            make.leading.equalToSuperview().offset(12)
             make.centerY.equalToSuperview()
-            make.size.equalTo(44)
+            make.width.equalTo(80)
+            make.height.equalTo(48)
         }
 
+        // Кнопка доступа к списку черновиков с иконкой и подписью
         let draftsButton = UIButton(type: .system)
-        draftsButton.setImage(UIImage(systemName: "folder"), for: .normal)
+        var draftsConfig = UIButton.Configuration.plain()
+        draftsConfig.image = UIImage(systemName: "folder.fill")
+        draftsConfig.title = "Черновики"
+        draftsConfig.imagePlacement = .top
+        draftsConfig.imagePadding = 2
+        draftsConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 10, weight: .medium)
+            return outgoing
+        }
+        draftsButton.configuration = draftsConfig
         draftsButton.tintColor = .white
         draftsButton.addTarget(self, action: #selector(didTapDrafts), for: .touchUpInside)
         topBar.addSubview(draftsButton)
         draftsButton.snp.makeConstraints { make in
-            make.leading.equalTo(saveButton.snp.trailing)
+            make.leading.equalTo(saveButton.snp.trailing).offset(0)
             make.centerY.equalToSuperview()
-            make.size.equalTo(44)
+            make.width.equalTo(85)
+            make.height.equalTo(48)
         }
 
+        // Кнопка Экспорт (сохраняет позицию справа)
         let exportButton = UIButton(type: .system)
         exportButton.setTitle("Экспорт", for: .normal)
         exportButton.titleLabel?.font = .boldSystemFont(ofSize: 14)
@@ -233,12 +260,24 @@ final class ViewController: UIViewController {
             make.centerY.equalToSuperview()
         }
 
+        // Кнопка Отмена (Undo)
         undoButton.setImage(UIImage(systemName: "arrow.uturn.backward"), for: .normal)
         undoButton.tintColor = .white
         undoButton.addTarget(self, action: #selector(didTapUndo), for: .touchUpInside)
         topBar.addSubview(undoButton)
         undoButton.snp.makeConstraints { make in
-            make.trailing.equalTo(exportButton.snp.leading).offset(-8)
+            make.trailing.equalTo(exportButton.snp.leading).offset(-12)
+            make.centerY.equalToSuperview()
+            make.size.equalTo(44)
+        }
+
+        // Кнопка Повтор (Redo) — стрелка вперед
+        redoButton.setImage(UIImage(systemName: "arrow.uturn.forward"), for: .normal)
+        redoButton.tintColor = .white
+        redoButton.addTarget(self, action: #selector(didTapRedo), for: .touchUpInside)
+        topBar.addSubview(redoButton)
+        redoButton.snp.makeConstraints { make in
+            make.trailing.equalTo(undoButton.snp.leading).offset(-4)
             make.centerY.equalToSuperview()
             make.size.equalTo(44)
         }
@@ -312,7 +351,7 @@ final class ViewController: UIViewController {
             make.size.equalTo(40)
         }
 
-        // Timeline (высота растёт вместе с количеством дорожек текста/аудио)
+        // Timeline
         timelineView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
             make.bottom.equalTo(bottomContainer.snp.top)
@@ -320,7 +359,7 @@ final class ViewController: UIViewController {
         timelineHeightConstraint = timelineView.heightAnchor.constraint(equalToConstant: TimelineView.minHeight)
         timelineHeightConstraint.isActive = true
 
-        // Bottom: либо панель инструментов, либо панель редактирования
+        // Bottom container
         bottomContainer.backgroundColor = Theme.panel
         bottomContainer.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
@@ -632,20 +671,30 @@ final class ViewController: UIViewController {
         emptyLabel.isHidden = !clips.isEmpty
     }
 
-    // MARK: Undo
+    // MARK: - Undo / Redo
 
     func pushUndo() {
         undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, project: project))
         if undoStack.count > 50 { undoStack.removeFirst() }
-        updateUndoButton()
+        
+        // Новое действие прерывает цепочку redo
+        redoStack.removeAll()
+        updateUndoRedoButtons()
     }
 
-    func updateUndoButton() {
+    func updateUndoRedoButtons() {
         undoButton.alpha = undoStack.isEmpty ? 0.35 : 1
+        undoButton.isEnabled = !undoStack.isEmpty
+        
+        redoButton.alpha = redoStack.isEmpty ? 0.35 : 1
+        redoButton.isEnabled = !redoStack.isEmpty
     }
 
     @objc func didTapUndo() {
         guard let s = undoStack.popLast() else { showToast("Нечего отменять"); return }
+        // Текущее состояние отправляем в стек redo перед откатом
+        redoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, project: project))
+        
         clips = s.clips
         texts = s.texts
         audios = s.audios
@@ -654,7 +703,23 @@ final class ViewController: UIViewController {
         filterPreviewClipID = nil
         rebuild()
         refreshActivePanel()
-        updateUndoButton()
+        updateUndoRedoButtons()
+    }
+
+    @objc func didTapRedo() {
+        guard let s = redoStack.popLast() else { showToast("Нечего возвращать"); return }
+        // Текущее состояние отправляем обратно в стек undo
+        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, project: project))
+        
+        clips = s.clips
+        texts = s.texts
+        audios = s.audios
+        project = s.project
+        clearSelection()
+        filterPreviewClipID = nil
+        rebuild()
+        refreshActivePanel()
+        updateUndoRedoButtons()
     }
 
     // MARK: Selection
