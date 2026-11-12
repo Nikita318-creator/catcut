@@ -358,6 +358,20 @@ final class ViewController: UIViewController {
         timelineView.onTextTimeChanged = { [weak self] id, s, d in self?.commitTextTime(id, start: s, duration: d) }
         timelineView.onAudioTimeChanged = { [weak self] id, s, off, d in self?.commitAudioTime(id, start: s, offset: off, duration: d) }
         timelineView.onNeedHeight = { [weak self] h in self?.setTimelineHeight(h) }
+        timelineView.onOpenTextEditor = { [weak self] id in
+            guard let self = self else { return }
+            self.selectedTextID = id
+            if let text = self.texts.first(where: { $0.id == id }) {
+                self.presentTextInput(editing: text)
+            }
+        }
+        timelineView.onOpenAudioEditor = { [weak self] id in
+            guard let self = self else { return }
+            self.selectedAudioID = id
+            self.focusLane = .audio
+            self.audioTab = 0 // или нужный индекс вкладки редактора аудио
+            self.openPanel(.audio)
+        }
         
         panel.onClose = { [weak self] in self?.closePanel() }
         panel.onSelect = { [weak self] index in self?.handlePanelSelect(index) }

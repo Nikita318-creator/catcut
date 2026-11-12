@@ -201,7 +201,9 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     var onAudioTimeChanged: ((UUID, Double, Double, Double) -> Void)?
     var onNeedHeight: ((CGFloat) -> Void)?
     var onClipTrimming: ((Double) -> Void)?
-
+    var onOpenTextEditor: ((UUID) -> Void)?
+    var onOpenAudioEditor: ((UUID) -> Void)?
+    
     private var clips: [VideoClip] = []
     private var layout = TimelineLayout(clips: [])
     private var texts: [TextOverlay] = []
@@ -565,8 +567,21 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             onTapTransition?(j)
             return
         }
-        for item in textItems.reversed() where item.frame.contains(p) { onSelectText?(item.id); return }
-        for item in audioItems.reversed() where item.frame.contains(p) { onSelectAudio?(item.id); return }
+        
+        // Тап по тексту сразу открывает его редактирование
+        for item in textItems.reversed() where item.frame.contains(p) {
+            onSelectText?(item.id)
+            onOpenTextEditor?(item.id)
+            return
+        }
+        
+        // Тап по аудио сразу открывает его редактор
+        for item in audioItems.reversed() where item.frame.contains(p) {
+            onSelectAudio?(item.id)
+            onOpenAudioEditor?(item.id)
+            return
+        }
+        
         for (i, f) in clipFrames.enumerated().reversed() where f.contains(p) {
             if i == selectedClip { onDeselectAll?() } else { onSelectClip?(i) }
             return
