@@ -32,50 +32,113 @@ extension ViewController {
 
     func importVideos(_ results: [PHPickerResult]) {
         guard !results.isEmpty else { return }
-        loader.startAnimating()
-        let group = DispatchGroup()
-        let collector = ClipCollector()
-
-        for (idx, r) in results.enumerated() {
-            let provider = r.itemProvider
-            group.enter()
-            if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
-                provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, error in
-                    defer { group.leave() }
-                    guard let url = url, error == nil,
-                          let file = DraftStore.shared.importMedia(from: url, defaultExt: "mov") else { return }
-                    let asset = AVAsset(url: DraftStore.shared.mediaURL(file))
-                    let dur = floorTicks(asset.duration.secs)
-                    guard dur.secs > 0.1, asset.tracks(withMediaType: .video).first != nil else { return }
-                    collector.set(idx, VideoClip(asset: asset, file: file, sourceRange: CMTimeRange(start: .zero, duration: dur)))
-                }
-            } else if provider.canLoadObject(ofClass: UIImage.self) {
-                provider.loadObject(ofClass: UIImage.self) { obj, _ in
-                    guard let img = obj as? UIImage else { group.leave(); return }
-                    // Картинка → клип по умолчанию на 3 секунды (можно растянуть за края)
-                    MediaTools.makeStillVideo(image: img) { name in
+        
+        // 1. Создаем временные/пустые клипы-заглушки для МГНОВЕННОГО отображения на таймлайне
+        var placeholderClips: [VideoClip] = []
+        let tempUUIDs = results.map { _ in UUID() }
+        
+        for id in tempUUIDs {
+            // Создаем временный пустой ассет или заглушку (на 3 секунды), пока файл копируется
+            let dummyURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(id.uuidString).mov")
+            let asset = AVAsset(url: dummyURL)
+            let clip = VideoClip(
+                id: id,
+                asset: asset,
+                file: "",
+                isImage: false,
+                sourceRange: CMTimeRange(start: .zero, duration: ticks(3)),
+                speed: 1.0
+            )
+            placeholderClips.append(clip)
+        }
+        
+        // Сразу добавляем на таймлайн и перестраиваем проект (пользователь видит дорожку моментально!)
+        pushUndo()
+        let resumeTime = clips.isEmpty ? CMTime.zero : ticks(displayTime)
+        clips.append(contentsOf: placeholderClips)
+        focusLane = .video
+        rebuild(seekTo: resumeTime)
+        
+        // 2. В фоне производим реальный импорт файлов и заменяем заглушки по мере готовности
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let group = DispatchGroup()
+            
+            for (index, r) in results.enumerated() {
+                let provider = r.itemProvider
+                let targetID = tempUUIDs[index]
+                group.enter()
+                
+                if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+                    provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, error in
                         defer { group.leave() }
-                        guard let name = name else { return }
-                        let asset = AVAsset(url: DraftStore.shared.mediaURL(name))
-                        collector.set(idx, VideoClip(asset: asset, file: name, isImage: true,
-                                                     sourceRange: CMTimeRange(start: .zero, duration: ticks(3))))
+                        guard let url = url, error == nil,
+                              let file = DraftStore.shared.importMedia(from: url, defaultExt: "mov") else { return }
+                        let realURL = DraftStore.shared.mediaURL(file)
+                        let asset = AVAsset(url: realURL)
+                        let dur = floorTicks(asset.duration.secs)
+                        guard dur.secs > 0.1, asset.tracks(withMediaType: .video).first != nil else { return }
+                        
+                        let realClip = VideoClip(
+                            id: targetID,
+                            asset: asset,
+                            file: file,
+                            sourceRange: CMTimeRange(start: .zero, duration: dur)
+                        )
+                        
+                        DispatchQueue.main.async {
+                            guard let self = self, let idx = self.clips.firstIndex(where: { $0.id == targetID }) else { return }
+                            self.clips[idx] = realClip
+                            ThumbnailStore.shared.prepare(asset)
+                            self.rebuildVideoCompositionOnlyOrFull()
+                        }
                     }
+                } else if provider.canLoadObject(ofClass: UIImage.self) {
+                    provider.loadObject(ofClass: UIImage.self) { obj, _ in
+                        guard let img = obj as? UIImage else { group.leave(); return }
+                        MediaTools.makeStillVideo(image: img) { name in
+                            defer { group.leave() }
+                            guard let name = name else { return }
+                            let realURL = DraftStore.shared.mediaURL(name)
+                            let asset = AVAsset(url: realURL)
+                            let realClip = VideoClip(
+                                id: targetID,
+                                asset: asset,
+                                file: name,
+                                isImage: true,
+                                sourceRange: CMTimeRange(start: .zero, duration: ticks(3))
+                            )
+                            
+                            DispatchQueue.main.async {
+                                guard let self = self, let idx = self.clips.firstIndex(where: { $0.id == targetID }) else { return }
+                                self.clips[idx] = realClip
+                                ThumbnailStore.shared.prepare(asset)
+                                self.rebuildVideoCompositionOnlyOrFull()
+                            }
+                        }
+                    }
+                } else {
+                    group.leave()
                 }
-            } else {
-                group.leave()
+            }
+            
+            group.notify(queue: .main) {
+                [weak self] in
+                self?.rebuild()
             }
         }
-
-        group.notify(queue: .main) { [weak self] in
-            guard let self = self else { return }
-            self.loader.stopAnimating()
-            let newClips = collector.ordered()
-            guard !newClips.isEmpty else { self.showToast("Не удалось загрузить файлы"); return }
-            self.pushUndo()
-            let resumeTime = self.clips.isEmpty ? CMTime.zero : ticks(self.displayTime)
-            self.clips.append(contentsOf: newClips)
-            self.focusLane = .video
-            self.rebuild(seekTo: resumeTime)
+    }
+    
+    // Вспомогательный метод для мягкого апдейта, если не нужно сбрасывать позицию плеера
+    private func rebuildVideoCompositionOnlyOrFull() {
+        if build == nil {
+            rebuild()
+        } else {
+            clampOverlays(total: TimelineLayout(clips: clips).total.secs)
+            build = EditorBuild.make(clips: clips, audios: audios, project: project)
+            if let b = build, let item = player.currentItem {
+                item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, project: project)
+            }
+            reloadTimeline()
         }
     }
 
