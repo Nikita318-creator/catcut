@@ -199,50 +199,44 @@ final class ViewController: UIViewController {
             make.height.equalTo(52) // Чуем увеличение высоты для иконки с текстом
         }
 
-        // Кнопка сохранения в черновики с иконкой и подписью
-        let saveButton = UIButton(type: .system)
-        var saveConfig = UIButton.Configuration.plain()
-        saveConfig.image = UIImage(systemName: "square.and.arrow.down.fill")
-        saveConfig.title = "Сохранить"
-        saveConfig.imagePlacement = .top
-        saveConfig.imagePadding = 2
-        saveConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = .systemFont(ofSize: 10, weight: .medium)
-            return outgoing
+        // 1. Создаем эффект стекла (Liquid Glass / Material)
+        let blurEffect = UIBlurEffect(style: .systemUltraThinMaterialDark)
+        let glassBackground = UIVisualEffectView(effect: blurEffect)
+        glassBackground.isUserInteractionEnabled = false // чтобы тапы проходили сквозь саму подложку на кнопку
+        glassBackground.layer.cornerRadius = 20
+        glassBackground.clipsToBounds = true
+        
+        // 2. Сама кнопка меню со стрелочкой
+        let menuButton = UIButton(type: .system)
+        var menuConfig = UIButton.Configuration.plain()
+        menuConfig.image = UIImage(systemName: "chevron.down")
+        menuConfig.imagePadding = 0
+        menuButton.configuration = menuConfig
+        menuButton.tintColor = .white
+        
+        let saveAction = UIAction(title: "Сохранить", image: UIImage(systemName: "square.and.arrow.down.fill")) { [weak self] _ in
+            self?.didTapSaveDraft()
         }
-        saveButton.configuration = saveConfig
-        saveButton.tintColor = .white
-        saveButton.addTarget(self, action: #selector(didTapSaveDraft), for: .touchUpInside)
-        topBar.addSubview(saveButton)
-        saveButton.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(12)
+        let draftsAction = UIAction(title: "Черновики", image: UIImage(systemName: "folder.fill")) { [weak self] _ in
+            self?.didTapDrafts()
+        }
+        let newProjectAction = UIAction(title: "Новый проект", image: UIImage(systemName: "plus.circle.fill"), attributes: .destructive) { [weak self] _ in
+            self?.newProject()
+        }
+        
+        menuButton.menu = UIMenu(title: "Управление проектом", children: [saveAction, draftsAction, newProjectAction])
+        menuButton.showsMenuAsPrimaryAction = true
+        
+        // 3. Собираем и верстаем через SnapKit
+        topBar.addSubview(glassBackground)
+        topBar.addSubview(menuButton)
+        
+        glassBackground.snp.makeConstraints { $0.edges.equalTo(menuButton) }
+        
+        menuButton.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(16)
             make.centerY.equalToSuperview()
-            make.width.equalTo(80)
-            make.height.equalTo(48)
-        }
-
-        // Кнопка доступа к списку черновиков с иконкой и подписью
-        let draftsButton = UIButton(type: .system)
-        var draftsConfig = UIButton.Configuration.plain()
-        draftsConfig.image = UIImage(systemName: "folder.fill")
-        draftsConfig.title = "Черновики"
-        draftsConfig.imagePlacement = .top
-        draftsConfig.imagePadding = 2
-        draftsConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = .systemFont(ofSize: 10, weight: .medium)
-            return outgoing
-        }
-        draftsButton.configuration = draftsConfig
-        draftsButton.tintColor = .white
-        draftsButton.addTarget(self, action: #selector(didTapDrafts), for: .touchUpInside)
-        topBar.addSubview(draftsButton)
-        draftsButton.snp.makeConstraints { make in
-            make.leading.equalTo(saveButton.snp.trailing).offset(0)
-            make.centerY.equalToSuperview()
-            make.width.equalTo(85)
-            make.height.equalTo(48)
+            make.size.equalTo(40)
         }
 
         // Кнопка Экспорт (сохраняет позицию справа)
