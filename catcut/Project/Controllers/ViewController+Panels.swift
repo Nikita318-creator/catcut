@@ -271,12 +271,21 @@ extension ViewController {
     }
 
     // MARK: Intro / outro animation
-
+    
     func refreshAnimationPanel(_ keep: Bool) {
         let isIntro = animTab == 0
         let cur = isIntro ? project.introID : project.outroID
         var items = [PanelItem(title: "Нет", symbol: "xmark")]
-        items += TransitionCatalog.all.map { PanelItem(title: $0.name, symbol: $0.category.symbol) }
+        
+        // Используем превью-ключи для анимаций по аналогии с переходами
+        items += TransitionCatalog.all.map { spec in
+            PanelItem(
+                title: spec.name,
+                previewKey: "anim-\(spec.id)", // Ключ для ленивой загрузки превью анимации
+                favorite: nil
+            )
+        }
+        
         let dur = isIntro ? project.introDuration : project.outroDuration
         let cfg = SliderConfig(title: "Длительность", min: 0.2, max: 2.5, value: Float(dur)) { String(format: "%.1fс", Double($0)) }
         panel.configure(title: isIntro ? "Появление видео в начале" : "Затухание видео в конце",

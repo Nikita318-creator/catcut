@@ -459,14 +459,52 @@ final class ViewController: UIViewController {
         }
         panel.onExtra = { [weak self] in self?.handlePanelExtra() }
         panel.onFavorite = { [weak self] index in self?.toggleFavorite(index) }
-        panel.previewProvider = { key, isValid, completion in
-            TransitionPreviewStore.shared.image(for: key, isValid: isValid, completion: completion)
+        panel.previewProvider = { [weak self] key, isValid, completion in
+            if key.hasPrefix("t") {
+                TransitionPreviewStore.shared.image(for: key, isValid: isValid, completion: completion)
+            } else if key.hasPrefix("anim-") {
+                // Здесь отдаем превью для анимации (например, на основе первого клипа)
+                self?.animationPreviewImage(for: key, completion: completion)
+            } else {
+                completion(nil)
+            }
         }
         
         ThumbnailStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
         WaveformStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
     }
 
+    func animationPreviewImage(for key: String, completion: @escaping (UIImage?) -> Void) {
+        // Извлекаем id анимации из ключа вида "anim-1"
+        let components = key.split(separator: "-")
+        guard components.count == 2, let animID = Int(components[1]), animID > 0 else {
+            completion(nil)
+            return
+        }
+        
+        // Берем первый клип для превью анимации появления/затухания
+        guard let clip = clips.first else {
+            completion(nil)
+            return
+        }
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            let gen = AVAssetImageGenerator(asset: clip.asset)
+            gen.appliesPreferredTrackTransform = true
+            gen.maximumSize = CGSize(width: 240, height: 240)
+            gen.requestedTimeToleranceBefore = .positiveInfinity
+            gen.requestedTimeToleranceAfter = .positiveInfinity
+            
+            let time = clip.sourceRange.start + CMTimeMultiplyByFloat64(clip.sourceRange.duration, multiplier: 0.1)
+            let cgImage = try? gen.copyCGImage(at: time, actualTime: nil)
+            let image = cgImage.map { UIImage(cgImage: $0) }
+            
+            DispatchQueue.main.async {
+                completion(image)
+            }
+        }
+    }
+    
     func setTimelineHeight(_ h: CGFloat) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, abs(self.timelineHeightConstraint.constant - h) > 0.5 else { return }
