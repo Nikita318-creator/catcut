@@ -16,8 +16,8 @@ import SnapKit
 final class ViewController: UIViewController {
 
     enum PanelKind { case speed, filter, adjust, transition, animation, effects, frame, background, text, audio }
-    enum PickerPurpose { case clips, bgPhoto, audioFromVideo }
-
+    enum PickerPurpose { case clips, bgPhoto, audioFromVideo, overlay }
+    
     enum TextTab: Int, CaseIterable {
         case text, styles, font, fill, stroke, shadow, shadowColor, glow, box, format, animIn, animOut
         var title: String {
@@ -38,8 +38,8 @@ final class ViewController: UIViewController {
         }
     }
 
-    struct Snapshot { var clips: [VideoClip]; var texts: [TextOverlay]; var audios: [AudioClip]; var project: ProjectSettings }
-
+    struct Snapshot { var clips: [VideoClip]; var texts: [TextOverlay]; var audios: [AudioClip]; var overlays: [VideoOverlay]; var project: ProjectSettings }
+    
     // UI
     let topBar = UIView()
     let playerContainer = UIView()
@@ -61,7 +61,12 @@ final class ViewController: UIViewController {
     var playerLayer: AVPlayerLayer!
     var toastLabel: PaddingLabel?
     var exportOverlay: ExportOverlay?
-
+    var overlays: [VideoOverlay] = []
+    var selectedOverlayID: UUID?
+    var overlayGestures: [UIGestureRecognizer] = []
+    var overlayGestureActive = false
+    var selectedOverlay: VideoOverlay? { overlays.first { $0.id == selectedOverlayID } }
+    
     // State
     var clips: [VideoClip] = []
     var texts: [TextOverlay] = []
@@ -321,6 +326,7 @@ final class ViewController: UIViewController {
         let rotate = UIRotationGestureRecognizer(target: self, action: #selector(handlePlayerRotate(_:)))
         rotate.delegate = self
         playerContainer.addGestureRecognizer(rotate)
+        installOverlayGestures()
 
         // Control bar
         controlBar.snp.makeConstraints { make in
@@ -445,6 +451,24 @@ final class ViewController: UIViewController {
             self.clearSelection()
             self.filterPreviewClipID = nil
             self.rebuild()
+        }
+        timelineView.onSelectOverlay = { [weak self] id in
+            guard let self = self, let o = self.overlays.first(where: { $0.id == id }) else { return }
+            self.clearSelection()
+            self.focusLane = .overlay
+            self.selectedOverlayID = id
+            // красная палка внутрь оверлея — чтобы его было видно на превью и можно было крутить/двигать
+            if self.displayTime < o.start || self.displayTime >= o.start + o.duration {
+                let t = min(o.start + 0.01, self.totalSeconds)
+                self.seekTo(ticks(t))
+                self.updateTimeLabel(t)
+                self.timelineView.setPlayhead(time: t, force: true)
+            }
+            self.reloadTimeline()
+            self.refreshActivePanel()
+        }
+        timelineView.onOverlayTimeChanged = { [weak self] id, s, off, d in
+            self?.commitOverlayTime(id, start: s, sourceStart: off, duration: d)
         }
         
         panel.onClose = { [weak self] in self?.closePanel() }
@@ -651,7 +675,7 @@ final class ViewController: UIViewController {
 
     /// Всё, что живёт «под видео», обязано укладываться в длину видео.
     func clampOverlays(total: Double) {
-        guard !clips.isEmpty else { texts = []; audios = []; return }
+        guard !clips.isEmpty else { texts = []; audios = []; overlays = []; selectedOverlayID = nil; return }
         texts = texts.map { o in
             var o = o
             o.start = max(0, min(o.start, total - 0.3))
@@ -666,11 +690,18 @@ final class ViewController: UIViewController {
             a.duration = min(a.duration, maxDur)
             return a
         }
+        overlays = overlays.map { o in
+            var o = o
+            o.start = max(0, min(o.start, total - 0.3))
+            o.duration = max(0.1, min(o.duration, total - o.start))
+            return o
+        }
+        if let id = selectedOverlayID, !overlays.contains(where: { $0.id == id }) { selectedOverlayID = nil }
         if let id = selectedTextID, !texts.contains(where: { $0.id == id }) { selectedTextID = nil }
         if let id = selectedAudioID, !audios.contains(where: { $0.id == id }) { selectedAudioID = nil }
     }
 
-    /// Полная пересборка (меняется структура: клипы, скорость, переходы, звук).
+    /// Полная пересборка (меняется структура: клипы, скорость, переходы, звук, оверлеи).
     func rebuild(seekTo target: CMTime? = nil) {
         let activeSecs = player.currentTime().secs > 0 ? player.currentTime().secs : timelineView.currentTime
         let oldTime = target ?? ticks(activeSecs)
@@ -681,6 +712,7 @@ final class ViewController: UIViewController {
         if let s = selectedClipIndex, s >= clips.count { selectedClipIndex = nil }
         clampOverlays(total: TimelineLayout(clips: clips).total.secs)
         clips.forEach { ThumbnailStore.shared.prepare($0.asset) }
+        overlays.forEach { if let m = OverlayMedia.info(for: $0.file) { ThumbnailStore.shared.prepare(m.asset) } }
         updateEmptyState()
         
         guard !clips.isEmpty else {
@@ -696,7 +728,8 @@ final class ViewController: UIViewController {
             return
         }
         
-        guard let b = EditorBuild.make(clips: clips, audios: audios, project: project) else {
+        // ПЕРЕДАЕМ overlays ВО ВСЕ ВЫЗОВЫ
+        guard let b = EditorBuild.make(clips: clips, audios: audios, overlays: overlays, project: project) else {
             showToast("Не удалось собрать видео")
             isSeeking = false
             return
@@ -705,7 +738,7 @@ final class ViewController: UIViewController {
         renderSize = b.renderSize
         
         let item = AVPlayerItem(asset: b.composition)
-        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, project: project)
+        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, project: project)
         item.audioMix = b.audioMix
         item.audioTimePitchAlgorithm = .spectral
         player.pause()
@@ -726,10 +759,10 @@ final class ViewController: UIViewController {
         ensureProcessedAudio()
     }
     
-    /// Лёгкое обновление (фильтры, текст): композиция та же, меняем только инструкции.
+    /// Лёгкое обновление (фильтры, текст, оверлеи): композиция та же, меняем только инструкции.
     func refreshVideoComposition() {
         guard let b = build, let item = player.currentItem else { return }
-        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, project: project)
+        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, project: project)
         if player.rate == 0 { seekTo(ticks(displayTime)) }
     }
 
@@ -738,9 +771,11 @@ final class ViewController: UIViewController {
                             layout: build?.layout ?? TimelineLayout(clips: []),
                             texts: texts,
                             audios: audios,
+                            overlays: overlays,
                             selectedClip: selectedClipIndex,
                             selectedText: selectedTextID,
                             selectedAudio: selectedAudioID,
+                            selectedOverlay: selectedOverlayID,
                             focus: focusLane)
     }
 
@@ -758,16 +793,16 @@ final class ViewController: UIViewController {
     }
 
     // MARK: - Undo / Redo
-
+    
     func pushUndo() {
-        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, project: project))
+        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, overlays: overlays, project: project))
         if undoStack.count > 50 { undoStack.removeFirst() }
         
         // Новое действие прерывает цепочку redo
         redoStack.removeAll()
         updateUndoRedoButtons()
     }
-
+    
     func updateUndoRedoButtons() {
         undoButton.alpha = undoStack.isEmpty ? 0.35 : 1
         undoButton.isEnabled = !undoStack.isEmpty
@@ -775,15 +810,16 @@ final class ViewController: UIViewController {
         redoButton.alpha = redoStack.isEmpty ? 0.35 : 1
         redoButton.isEnabled = !redoStack.isEmpty
     }
-
+    
     @objc func didTapUndo() {
         guard let s = undoStack.popLast() else { showToast("Нечего отменять"); return }
         // Текущее состояние отправляем в стек redo перед откатом
-        redoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, project: project))
+        redoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, overlays: overlays, project: project))
         
         clips = s.clips
         texts = s.texts
         audios = s.audios
+        overlays = s.overlays
         project = s.project
         clearSelection()
         filterPreviewClipID = nil
@@ -791,15 +827,16 @@ final class ViewController: UIViewController {
         refreshActivePanel()
         updateUndoRedoButtons()
     }
-
+    
     @objc func didTapRedo() {
         guard let s = redoStack.popLast() else { showToast("Нечего возвращать"); return }
         // Текущее состояние отправляем обратно в стек undo
-        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, project: project))
+        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, overlays: overlays, project: project))
         
         clips = s.clips
         texts = s.texts
         audios = s.audios
+        overlays = s.overlays
         project = s.project
         clearSelection()
         filterPreviewClipID = nil
@@ -814,6 +851,7 @@ final class ViewController: UIViewController {
         selectedClipIndex = nil
         selectedTextID = nil
         selectedAudioID = nil
+        selectedOverlayID = nil
     }
 
     func currentClipIndex() -> Int? {
@@ -861,6 +899,7 @@ final class ViewController: UIViewController {
         let keepSelection: Bool
         switch lane {
         case .video: keepSelection = selectedClipIndex != nil
+        case .overlay: keepSelection = selectedOverlayID != nil
         case .text: keepSelection = selectedTextID != nil
         case .audio: keepSelection = selectedAudioID != nil
         }
@@ -879,7 +918,7 @@ final class ViewController: UIViewController {
     }
 
     func ensureSelection() {
-        if selectedClipIndex == nil, selectedTextID == nil, selectedAudioID == nil, let i = currentClipIndex() {
+        if selectedClipIndex == nil, selectedTextID == nil, selectedAudioID == nil, selectedOverlayID == nil, let i = currentClipIndex() {
             selectedClipIndex = i
             if clips.count > 1 { transitionBoundary = min(i, clips.count - 2) }
             reloadTimeline()

@@ -302,6 +302,23 @@ extension ViewController {
     }
 
     @objc func handlePlayerPan(_ g: UIPanGestureRecognizer) {
+        if let id = selectedOverlayID, let idx = overlays.firstIndex(where: { $0.id == id }) {
+            if g.state == .began { pushUndo() }
+            let tr = g.translation(in: playerContainer)
+            let w = playerContainer.bounds.width
+            let h = playerContainer.bounds.height
+            guard w > 0, h > 0 else { return }
+            
+            var pos = overlays[idx].position
+            pos.x = min(1, max(0, pos.x + tr.x / w))
+            pos.y = min(1, max(0, pos.y + tr.y / h))
+            overlays[idx].position = pos
+            g.setTranslation(.zero, in: playerContainer)
+            refreshVideoComposition()
+            return
+        }
+        
+        // Старая логика для текста:
         guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else { return }
         let vr = videoRectInPlayer()
         guard vr.width > 0, vr.height > 0 else { return }
@@ -315,24 +332,24 @@ extension ViewController {
         refreshVideoComposition()
         updateTextBox()
     }
-
+    
     @objc func handlePlayerPinch(_ g: UIPinchGestureRecognizer) {
-        guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else { return }
-        if g.state == .began { pushUndo() }
-        guard g.state == .changed else { return }
-        texts[idx].size = min(0.4, max(0.02, texts[idx].size * g.scale))
-        g.scale = 1
-        refreshVideoComposition()
-        updateTextBox()
+        if let id = selectedOverlayID, let idx = overlays.firstIndex(where: { $0.id == id }) {
+            if g.state == .began { pushUndo() }
+            overlays[idx].scale = max(0.1, min(2.0, overlays[idx].scale * g.scale))
+            g.scale = 1.0
+            refreshVideoComposition()
+            return
+        }
     }
-
+    
     @objc func handlePlayerRotate(_ g: UIRotationGestureRecognizer) {
-        guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else { return }
-        if g.state == .began { pushUndo() }
-        guard g.state == .changed else { return }
-        texts[idx].rotation += g.rotation
-        g.rotation = 0
-        refreshVideoComposition()
-        updateTextBox()
+        if let id = selectedOverlayID, let idx = overlays.firstIndex(where: { $0.id == id }) {
+            if g.state == .began { pushUndo() }
+            overlays[idx].rotation += g.rotation
+            g.rotation = 0
+            refreshVideoComposition()
+            return
+        }
     }
 }

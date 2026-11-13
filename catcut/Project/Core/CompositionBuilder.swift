@@ -16,16 +16,18 @@ final class EditorBuild {
     let renderSize: CGSize
     let trackIDs: [CMPersistentTrackID]
     let orientations: [CGImagePropertyOrientation]
+    let overlayLayerInfos: [OverlayLayerInfo] // Сохраняем инфо об оверлеях и их треках
     private var bgImages: [String: CIImage] = [:]
 
     init(composition: AVMutableComposition, audioMix: AVMutableAudioMix?, layout: TimelineLayout,
-         renderSize: CGSize, trackIDs: [CMPersistentTrackID], orientations: [CGImagePropertyOrientation]) {
+         renderSize: CGSize, trackIDs: [CMPersistentTrackID], orientations: [CGImagePropertyOrientation], overlayLayerInfos: [OverlayLayerInfo]) {
         self.composition = composition
         self.audioMix = audioMix
         self.layout = layout
         self.renderSize = renderSize
         self.trackIDs = trackIDs
         self.orientations = orientations
+        self.overlayLayerInfos = overlayLayerInfos
     }
 
     private func bgImage(for file: String) -> CIImage? {
@@ -46,7 +48,6 @@ final class EditorBuild {
     }
 
     static func frameSize(for project: ProjectSettings, firstClip: VideoClip) -> CGSize {
-        // Обрезка: выходное разрешение = размер выбранной области (без полей и подложки)
         if let c = project.crop, let src = orientedSize(of: firstClip) {
             var w = src.width * c.width, h = src.height * c.height
             let k = min(1, 1920 / max(w, h))
@@ -75,7 +76,7 @@ final class EditorBuild {
         return size
     }
 
-    static func make(clips: [VideoClip], audios: [AudioClip], project: ProjectSettings) -> EditorBuild? {
+    static func make(clips: [VideoClip], audios: [AudioClip], overlays: [VideoOverlay], project: ProjectSettings) -> EditorBuild? {
         guard !clips.isEmpty else { return nil }
 
         let comp = AVMutableComposition()
@@ -85,6 +86,34 @@ final class EditorBuild {
               let aB = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         else { return nil }
 
+        // Создаем динамические треки под каждый оверлей и сохраняем их маппинг
+        var overlayLayerInfos: [OverlayLayerInfo] = []
+        for o in overlays {
+            guard o.duration > 0.05,
+                  let media = OverlayMedia.info(for: o.file),
+                  let src = media.asset.tracks(withMediaType: .video).first,
+                  let oTrack = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else { continue }
+            let startT = ticks(o.start)
+            let want = floorTicks(o.duration)
+            if o.isImage {
+                // картинка = короткое «видео» из одного кадра: берём сколько есть и растягиваем до нужной длины
+                let avail = min(floorTicks(media.duration), want)
+                guard avail > .zero else { continue }
+                try? oTrack.insertTimeRange(CMTimeRange(start: .zero, duration: avail), of: src, at: startT)
+                if avail < want {
+                    oTrack.scaleTimeRange(CMTimeRange(start: startT, duration: avail), toDuration: want)
+                }
+            } else {
+                let avail = floorTicks(max(0, media.duration - o.sourceStart))
+                let d = min(want, avail)
+                guard d > .zero else { continue }
+                try? oTrack.insertTimeRange(CMTimeRange(start: ticks(o.sourceStart), duration: d), of: src, at: startT)
+            }
+            let orient = imageOrientation(for: src.preferredTransform)
+            overlayLayerInfos.append(OverlayLayerInfo(trackID: oTrack.trackID, orientation: orient, overlay: o))
+        }
+
         let layout = TimelineLayout(clips: clips)
         let videoTracks = [vA, vB]
         let audioTracks = [aA, aB]
@@ -92,7 +121,7 @@ final class EditorBuild {
         var orientations: [CGImagePropertyOrientation] = []
 
         for (i, clip) in clips.enumerated() {
-            let slot = i % 2          // клипы чередуются по двум дорожкам — так возможны переходы
+            let slot = i % 2
             let start = layout.starts[i]
             let dur = layout.durations[i]
 
@@ -106,7 +135,6 @@ final class EditorBuild {
                 orientations.append(.up)
             }
 
-            // Звук клипа: после эффекта (processedAudio) или оригинал; громкость у каждого куска своя
             let audioAsset = clip.processedAudio ?? clip.asset
             if clip.volume > 0.001, let srcA = audioAsset.tracks(withMediaType: .audio).first {
                 try? audioTracks[slot].insertTimeRange(clip.sourceRange, of: srcA, at: start)
@@ -160,11 +188,10 @@ final class EditorBuild {
 
         return EditorBuild(composition: comp, audioMix: mix, layout: layout,
                            renderSize: frameSize(for: project, firstClip: clips[0]),
-                           trackIDs: [vA.trackID, vB.trackID], orientations: orientations)
+                           trackIDs: [vA.trackID, vB.trackID], orientations: orientations, overlayLayerInfos: overlayLayerInfos)
     }
 
-    /// Инструкции дёшево пересобираются — поэтому смена фильтра/текста не пересобирает всю композицию.
-    func makeVideoComposition(clips: [VideoClip], texts: [TextOverlay], project: ProjectSettings) -> AVMutableVideoComposition {
+    func makeVideoComposition(clips: [VideoClip], texts: [TextOverlay], overlays: [VideoOverlay], project: ProjectSettings) -> AVMutableVideoComposition {
         enum Seg { case solo(Int), trans(Int) }
         var segs: [(CMTime, CMTime, Seg)] = []
 
@@ -179,23 +206,30 @@ final class EditorBuild {
         }
 
         func layer(_ i: Int) -> LayerInfo {
-            let c = clips[min(i, clips.count - 1)]
+            let safeIdx = min(max(0, i), clips.count - 1)
+            let c = clips[safeIdx]
             var bgImg: CIImage? = nil
             var bgCol: CIColor? = nil
             if c.bgMode == 1, let f = c.bgFile { bgImg = bgImage(for: f) }
             if c.bgMode == 3 { bgCol = CIColor(color: TextPalette.color(c.bgColor)) }
-            return LayerInfo(trackID: trackIDs[i % 2], orientation: orientations[i],
+            return LayerInfo(trackID: trackIDs[i % 2], orientation: orientations[safeIdx],
                              preset: FilterCatalog.preset(c.filterID)?.adjust, intensity: c.filterIntensity,
                              custom: c.adjust, look: VideoLook(rawValue: c.look) ?? .none,
                              flipH: c.flipH, flipV: c.flipV, rotation: c.rotation, zoom: c.zoom,
                              bgMode: c.bgMode, bgImage: bgImg, bgColor: bgCol,
-                             bgDepthThreshold: c.bgDepthThreshold) // <-- ПРОКИДЫВАЕМ ЗНАЧЕНИЕ СЮДА
+                             bgDepthThreshold: c.bgDepthThreshold)
         }
 
         let info = ProjectInfo(fillMode: project.fillMode, blurBackground: project.blurBackground,
                                introID: project.introID, introDuration: project.introDuration,
                                outroID: project.outroID, outroDuration: project.outroDuration,
                                total: layout.total.secs, crop: project.crop)
+        // Живые параметры оверлеев (позиция/размер/поворот/прозрачность) берём из актуального массива,
+        // а не из снимка на момент сборки треков — так жесты работают без полной пересборки.
+        let liveOverlays: [OverlayLayerInfo] = overlayLayerInfos.compactMap { i in
+            guard let o = overlays.first(where: { $0.id == i.overlay.id }) else { return nil }
+            return OverlayLayerInfo(trackID: i.trackID, orientation: i.orientation, overlay: o)
+        }
         let endTime = max(layout.total, composition.duration)
         var instructions: [AVVideoCompositionInstructionProtocol] = []
 
@@ -205,10 +239,10 @@ final class EditorBuild {
             let range = CMTimeRange(start: seg.0, end: e)
             switch seg.2 {
             case .solo(let i):
-                instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: nil, transitionID: 0, texts: texts, project: info))
+                instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: nil, transitionID: 0, texts: texts, overlays: liveOverlays, project: info))
             case .trans(let i):
                 instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: layer(i + 1),
-                                                      transitionID: clips[i].transitionID, texts: texts, project: info))
+                                                      transitionID: clips[i].transitionID, texts: texts, overlays: liveOverlays, project: info))
             }
         }
 

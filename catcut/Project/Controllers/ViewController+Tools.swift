@@ -51,6 +51,15 @@ extension ViewController {
             reloadTimeline()
             audioTab = 0
             openPanel(.audio)
+        case .overlay:
+            guard requireClips() else { return }
+            pickerPurpose = .overlay
+            var config = PHPickerConfiguration()
+            config.filter = .any(of: [.videos, .images])
+            config.selectionLimit = 1
+            let picker = PHPickerViewController(configuration: config)
+            picker.delegate = self
+            present(picker, animated: true)
         }
     }
 
@@ -93,6 +102,7 @@ extension ViewController {
         guard requireClips() else { return }
         switch focusLane {
         case .video: splitVideo()
+        case .overlay: splitOverlay()
         case .text: splitText()
         case .audio: splitAudio()
         }
@@ -110,6 +120,32 @@ extension ViewController {
         if let id = selectedAudioID, let i = audios.firstIndex(where: { $0.id == id }),
            t > audios[i].start, t < audios[i].start + audios[i].duration { return i }
         return audios.lastIndex { t > $0.start && t < $0.start + $0.duration }
+    }
+
+    func overlayIndexAtPlayhead() -> Int? {
+        let t = displayTime
+        if let id = selectedOverlayID, let i = overlays.firstIndex(where: { $0.id == id }),
+           t > overlays[i].start, t < overlays[i].start + overlays[i].duration { return i }
+        return overlays.lastIndex { t > $0.start && t < $0.start + $0.duration }
+    }
+
+    func splitOverlay() {
+        let t = displayTime
+        guard let i = overlayIndexAtPlayhead(), t - overlays[i].start > 0.2, overlays[i].start + overlays[i].duration - t > 0.2 else {
+            showToast("Поставьте красную палку внутрь оверлея на дорожке оверлеев")
+            return
+        }
+        pushUndo()
+        let o = overlays[i]
+        var second = o
+        second.id = UUID()
+        second.start = t
+        second.sourceStart = o.sourceStart + (t - o.start)
+        second.duration = o.start + o.duration - t
+        overlays[i].duration = t - o.start
+        overlays.append(second)
+        rebuild()
+        refreshActivePanel()
     }
 
     func splitText() {
@@ -208,6 +244,14 @@ extension ViewController {
             refreshActivePanel()
             return
         }
+        if let id = selectedOverlayID {
+            pushUndo()
+            overlays.removeAll { $0.id == id }
+            selectedOverlayID = nil
+            rebuild()
+            refreshActivePanel()
+            return
+        }
         switch focusLane {
         case .text:
             guard let i = textIndexAtPlayhead() else { showToast("Выберите текст на дорожке"); return }
@@ -218,6 +262,12 @@ extension ViewController {
             guard let i = audioIndexAtPlayhead() else { showToast("Выберите аудио на дорожке"); return }
             pushUndo()
             audios.remove(at: i)
+            rebuild()
+            refreshActivePanel()
+        case .overlay:
+            guard let i = overlayIndexAtPlayhead() else { showToast("Выберите оверлей на дорожке"); return }
+            pushUndo()
+            overlays.remove(at: i)
             rebuild()
             refreshActivePanel()
         case .video:
@@ -260,6 +310,21 @@ extension ViewController {
             clearSelection()
             selectedAudioID = copy.id
             rebuild()
+        case .overlay:
+            guard let i = selectedOverlayID.flatMap({ id in overlays.firstIndex { $0.id == id } }) ?? overlayIndexAtPlayhead() else {
+                showToast("Выберите оверлей на дорожке"); return
+            }
+            let o = overlays[i]
+            guard o.start + o.duration + 0.3 < totalSeconds else { showToast("Нет места после оверлея"); return }
+            pushUndo()
+            var copy = o
+            copy.id = UUID()
+            copy.start = o.start + o.duration
+            copy.duration = min(o.duration, totalSeconds - copy.start)
+            overlays.append(copy)
+            clearSelection()
+            selectedOverlayID = copy.id
+            rebuild()
         case .video:
             guard let i = currentClipIndex() else { showToast("Сначала добавьте видео"); return }
             pushUndo()
@@ -280,7 +345,6 @@ extension ViewController {
         pushUndo()
         clips[i].sourceRange = range
         
-        // Корректируем длину перехода, если клип стал слишком коротким
         if i < clips.count - 1, clips[i].transitionID != 0 {
             let clipDur = range.duration.secs
             if clips[i].transitionDuration > clipDur {

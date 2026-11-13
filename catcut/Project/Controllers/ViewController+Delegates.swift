@@ -36,6 +36,7 @@ extension ViewController: UIGestureRecognizerDelegate {
     }
 
     func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        if overlayGestures.contains(where: { $0 === g }) { return overlayGestureShouldBegin(g) }
         if isTransformGesture(g) { return selectedText != nil }
         return true
     }
@@ -54,6 +55,7 @@ extension ViewController: PHPickerViewControllerDelegate, UIDocumentPickerDelega
         case .clips: importVideos(results)
         case .bgPhoto: loadBackgroundPhoto(results)
         case .audioFromVideo: extractAudio(results)
+        case .overlay: importOverlayVideo(results)
         }
     }
 

@@ -100,6 +100,54 @@ final class ClipTileView: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
+/// Плитка оверлея на своей видео-дорожке: кадры-превью, как у основного клипа.
+final class OverlayTileView: UIView {
+    init(overlay: VideoOverlay, asset: AVAsset?, width: CGFloat, height: CGFloat, selected: Bool) {
+        super.init(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        backgroundColor = UIColor(white: 0.22, alpha: 1)
+        layer.cornerRadius = 6
+        clipsToBounds = true
+        layer.borderWidth = 1
+        layer.borderColor = UIColor.systemIndigo.withAlphaComponent(0.9).cgColor
+
+        if let asset = asset {
+            let tileW = height
+            let count = max(1, Int(ceil(width / tileW)))
+            for i in 0..<count {
+                let iv = UIImageView()
+                iv.contentMode = .scaleAspectFill
+                iv.clipsToBounds = true
+                iv.frame = CGRect(x: CGFloat(i) * tileW, y: 0, width: tileW, height: height)
+                let frac = min(1, max(0, (CGFloat(i) + 0.5) * tileW / width))
+                let t = overlay.isImage ? 0 : overlay.sourceStart + Double(frac) * overlay.duration
+                iv.image = ThumbnailStore.shared.image(for: asset, at: t)
+                addSubview(iv)
+            }
+        }
+
+        var info = String(format: " ⧉ %.1fс", overlay.duration)
+        if overlay.isImage { info += " 🖼" }
+        info += " "
+        let label = UILabel()
+        label.text = info
+        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.textColor = .white
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        label.layer.cornerRadius = 3
+        label.clipsToBounds = true
+        label.sizeToFit()
+        label.frame.origin = CGPoint(x: 16, y: height - label.frame.height - 3)
+        addSubview(label)
+
+        if selected {
+            layer.borderWidth = 2.5
+            layer.borderColor = UIColor.white.cgColor
+            addTrimHandles(to: self)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
 /// Полоска аудио с волной.
 final class AudioBarView: UIView {
     var peaks: [Float] = []
@@ -167,7 +215,7 @@ final class AudioBarView: UIView {
     }
 }
 
-enum TimelineLane { case video, text, audio }
+enum TimelineLane { case video, overlay, text, audio }
 
 /// UIScrollView, который не начинает скролл, если палец лёг на ручку обрезки / выбранную полоску.
 final class TimelineScrollView: UIScrollView {
@@ -202,6 +250,8 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     private let laneHeight: CGFloat = 26
     private let laneStep: CGFloat = 30
     private let handleZone: CGFloat = 28
+    private let overlayRowH: CGFloat = 40       // высота плитки оверлея
+    private let overlayStep: CGFloat = 44       // шаг между рядами оверлеев
     private let minDur: Double = 0.3
 
     private let scrollView = TimelineScrollView()
@@ -230,11 +280,13 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     var onClipTrimming: ((Double) -> Void)?
     var onOpenTextEditor: ((UUID) -> Void)?
     var onOpenAudioEditor: ((UUID) -> Void)?
-    
-    // Перемещение по лонгтапу: видео — новый порядок клипов.
-    // Текст/аудио коммитятся через onTextTimeChanged / onAudioTimeChanged (один раз, при отпускании пальца).
     var onClipsReordered: (([VideoClip]) -> Void)?
+    var onSelectOverlay: ((UUID) -> Void)?
+    var onOverlayTimeChanged: ((UUID, Double, Double, Double) -> Void)?   // id, start, sourceStart, duration
     
+    private var overlays: [VideoOverlay] = []
+    private var selectedOverlay: UUID?
+    private var overlayItems: [Item] = []
     private var clips: [VideoClip] = []
     private var layout = TimelineLayout(clips: [])
     private var texts: [TextOverlay] = []
@@ -269,6 +321,8 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         case clipMove(Int)
         case textMove(UUID)
         case audioMove(UUID)
+        case overlayLeft(UUID), overlayRight(UUID)
+        case overlayMove(UUID)
     }
     
     private struct DragState {
@@ -362,12 +416,12 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             make.size.equalTo(10)
         }
 
-        let defs: [(TimelineLane, String)] = [(.video, "film"), (.text, "textformat"), (.audio, "music.note")]
+        let defs: [(TimelineLane, String)] = [(.video, "film"), (.overlay, "pip"), (.text, "textformat"), (.audio, "music.note")]
         for (lane, symbol) in defs {
             let b = UIButton(type: .system)
             b.setImage(UIImage(systemName: symbol), for: .normal)
             b.layer.cornerRadius = 6
-            b.tag = lane == .video ? 0 : (lane == .text ? 1 : 2)
+            b.tag = [TimelineLane.video: 0, .text: 1, .audio: 2, .overlay: 3][lane] ?? 0
             b.addTarget(self, action: #selector(chipTapped(_:)), for: .touchUpInside)
             addSubview(b)
             chips[lane] = b
@@ -422,7 +476,12 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     }
 
     @objc private func chipTapped(_ b: UIButton) {
-        onFocusLane?(b.tag == 0 ? .video : (b.tag == 1 ? .text : .audio))
+        switch b.tag {
+        case 0: onFocusLane?(.video)
+        case 1: onFocusLane?(.text)
+        case 2: onFocusLane?(.audio)
+        default: onFocusLane?(.overlay)
+        }
     }
 
     override func layoutSubviews() {
@@ -435,26 +494,23 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    func reload(clips: [VideoClip], layout: TimelineLayout, texts: [TextOverlay], audios: [AudioClip],
-                selectedClip: Int?, selectedText: UUID?, selectedAudio: UUID?, focus: TimelineLane) {
-        
-        // 1. ЗАПОМИНАЕМ текущий сдвиг скролла пользователя, чтобы лента не улетала к старту
+    func reload(clips: [VideoClip], layout: TimelineLayout, texts: [TextOverlay], audios: [AudioClip], overlays: [VideoOverlay],
+                selectedClip: Int?, selectedText: UUID?, selectedAudio: UUID?, selectedOverlay: UUID?, focus: TimelineLane) {
         let currentOffsetX = scrollView.contentOffset.x
-        print("currentOffsetX start \(currentOffsetX)")
-        // Пока палец тянет край или двигает объект — не пересобираем ленту
         if drag != nil || moveDrag != nil { return }
         self.clips = clips
         self.layout = layout
         self.texts = texts
         self.audios = audios
+        self.overlays = overlays
         self.selectedClip = selectedClip
         self.selectedText = selectedText
         self.selectedAudio = selectedAudio
+        self.selectedOverlay = selectedOverlay
         self.focus = focus
         
         rebuildContent()
         
-        // 2. ВОССТАНАВЛИВАЕМ скролл на прежнее место вместо слепого сброса в 0 по lastPlayheadTime
         if currentOffsetX > 0 {
             scrollView.contentOffset.x = min(currentOffsetX, max(0, scrollView.contentSize.width - scrollView.bounds.width))
             ruler.offsetX = scrollView.contentOffset.x
@@ -502,12 +558,24 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         ruler.pps = pps
         ruler.total = totalSeconds
 
-        clipFrames = []; clipViews = []; transitionFrames = []; transitionViews = []; textItems = []; audioItems = []; laneRows = []
+        clipFrames = []; clipViews = []; transitionFrames = []; transitionViews = []
+        textItems = []; audioItems = []; overlayItems = []; laneRows = []
 
         let tl = assignLanes(texts.map { ($0.start, max($0.start + $0.duration, $0.start + 24 / Double(pps))) })
+        let ol = assignLanes(overlays.map { ($0.start, max($0.start + $0.duration, $0.start + 24 / Double(pps))) })
         let al = assignLanes(audios.map { ($0.start, $0.start + $0.duration) })
-        let textRows = max(1, tl.count), audioRows = max(1, al.count)
-        let textBase = clipTop + clipHeight + 8
+
+        let hasOverlays = !overlays.isEmpty
+        let overlayRows = ol.count
+        let textRows = max(1, tl.count)
+        let audioRows = max(1, al.count)
+
+        // Оверлеи — настоящие видео-дорожки НАД основной (как в CapCut).
+        // Пока оверлеев нет, дорожки не видно: по умолчанию одна видео-дорожка.
+        let overlayTop = clipTop
+        let overlayBlockH: CGFloat = hasOverlays ? CGFloat(overlayRows) * overlayStep + 4 : 0
+        let mainTop = clipTop + overlayBlockH
+        let textBase = mainTop + clipHeight + 8
         let audioBase = textBase + CGFloat(textRows) * laneStep + 4
         let trackWidth = CGFloat(totalSeconds) * pps
 
@@ -522,7 +590,8 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             }
             laneRows.append((lane, CGRect(x: 0, y: y - 2, width: contentW, height: height + 4)))
         }
-        addLaneBackground(.video, y: clipTop - 2, height: clipHeight + 4)
+        addLaneBackground(.video, y: mainTop - 2, height: clipHeight + 4)
+        if hasOverlays { addLaneBackground(.overlay, y: overlayTop - 2, height: overlayBlockH - 2) }
         addLaneBackground(.text, y: textBase - 2, height: CGFloat(textRows) * laneStep)
         addLaneBackground(.audio, y: audioBase - 2, height: CGFloat(audioRows) * laneStep)
 
@@ -536,20 +605,26 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         if texts.isEmpty { hint("Текст — нажмите «Текст» внизу", y: textBase) }
         if audios.isEmpty { hint("Аудио — нажмите «Аудио» внизу", y: audioBase) }
 
-        let chipY: [TimelineLane: CGFloat] = [.video: clipTop + (clipHeight - 24) / 2, .text: textBase + 1, .audio: audioBase + 1]
+        let chipY: [TimelineLane: CGFloat] = [
+            .video: mainTop + (clipHeight - 24) / 2,
+            .overlay: overlayTop + (overlayStep - 24) / 2,
+            .text: textBase + 1,
+            .audio: audioBase + 1
+        ]
         for (lane, b) in chips {
             let on = focus == lane
+            b.isHidden = (lane == .overlay && !hasOverlays)
             b.frame = CGRect(x: 6, y: chipY[lane] ?? 0, width: 28, height: 24)
             b.backgroundColor = on ? Theme.accent : UIColor(white: 0.22, alpha: 0.95)
             b.tintColor = on ? .black : .white
         }
 
-        // 1. Видео клипы
+        // 1. Основная видео-дорожка
         for (i, clip) in clips.enumerated() where i < layout.starts.count {
             let x = side + CGFloat(layout.starts[i].secs) * pps + 1
             let w = max(10, CGFloat(layout.durations[i].secs) * pps - 2)
             let tile = ClipTileView(clip: clip, width: w, height: clipHeight, selected: i == selectedClip)
-            tile.frame = CGRect(x: x, y: clipTop, width: w, height: clipHeight)
+            tile.frame = CGRect(x: x, y: mainTop, width: w, height: clipHeight)
             contentView.addSubview(tile)
             clipFrames.append(tile.frame)
             clipViews.append(tile)
@@ -559,11 +634,26 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             contentView.bringSubviewToFront(clipViews[sel])
         }
 
-        // 2. Иконки переходов
+        // 2. Видео-дорожки оверлеев (с превью-кадрами, обрезкой за края и переносом)
+        for (k, o) in overlays.enumerated() {
+            let x = side + CGFloat(o.start) * pps
+            let w = max(24, CGFloat(o.duration) * pps)
+            let y = overlayTop + CGFloat(ol.lane[k]) * overlayStep
+            let tile = OverlayTileView(overlay: o, asset: OverlayMedia.info(for: o.file)?.asset,
+                                       width: w, height: overlayRowH, selected: o.id == selectedOverlay)
+            tile.frame = CGRect(x: x, y: y, width: w, height: overlayRowH)
+            contentView.addSubview(tile)
+            overlayItems.append(Item(id: o.id, frame: tile.frame, view: tile))
+        }
+        if let id = selectedOverlay, let item = overlayItems.first(where: { $0.id == id }) {
+            contentView.bringSubviewToFront(item.view)
+        }
+
+        // 3. Иконки переходов
         if clips.count > 1 {
             for j in 0..<(clips.count - 1) {
                 let cx = side + CGFloat(layout.starts[j + 1].secs) * pps
-                let f = CGRect(x: cx - 13, y: clipTop + clipHeight / 2 - 13, width: 26, height: 26)
+                let f = CGRect(x: cx - 13, y: mainTop + clipHeight / 2 - 13, width: 26, height: 26)
                 transitionFrames.append(f)
                 let spec = TransitionCatalog.spec(clips[j].transitionID)
                 let has = spec != nil
@@ -616,12 +706,9 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             bar.title = a.title
             bar.offset = a.sourceOffset
             bar.duration = a.duration
-            
-            // ПРОКИДЫВАЕМ ПАРАМЕТРЫ ДЛЯ ВИЗУАЛЬНОГО ИЗМЕНЕНИЯ ВОЛНЫ:
             bar.volume = a.volume
             bar.fadeIn = a.fadeIn
             bar.fadeOut = a.fadeOut
-            
             bar.peaks = WaveformStore.shared.peaks(for: a.processed ?? a.asset) ?? []
             if a.id == selectedAudio {
                 bar.layer.borderWidth = 2
@@ -632,7 +719,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             audioItems.append(Item(id: a.id, frame: bar.frame, view: bar))
         }
 
-        addTile.frame = CGRect(x: side + trackWidth + 10, y: clipTop, width: 56, height: clipHeight)
+        addTile.frame = CGRect(x: side + trackWidth + 10, y: mainTop, width: 56, height: clipHeight)
         contentView.addSubview(addTile)
 
         let needed = max(TimelineView.minHeight, audioBase + CGFloat(audioRows) * laneStep + 8)
@@ -664,6 +751,11 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             return
         }
         
+        for item in overlayItems.reversed() where item.frame.contains(p) {
+            if item.id == selectedOverlay { onDeselectAll?() } else { onSelectOverlay?(item.id) }
+            return
+        }
+
         for (i, f) in clipFrames.enumerated().reversed() where f.contains(p) {
             if i == selectedClip { onDeselectAll?() } else { onSelectClip?(i) }
             return
@@ -696,6 +788,12 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             if p.x <= item.frame.minX + hz { return .audioLeft(id) }
             if p.x >= item.frame.maxX - hz { return .audioRight(id) }
         }
+        if let id = selectedOverlay, let item = overlayItems.first(where: { $0.id == id }),
+           item.frame.insetBy(dx: -10, dy: -4).contains(p) {
+            let hz = min(handleZone, item.frame.width / 3)
+            if p.x <= item.frame.minX + hz { return .overlayLeft(id) }
+            if p.x >= item.frame.maxX - hz { return .overlayRight(id) }
+        }
         return nil
     }
 
@@ -708,6 +806,9 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         }
         for item in audioItems.reversed() where item.frame.contains(p) {
             return .audioMove(item.id)
+        }
+        for item in overlayItems.reversed() where item.frame.contains(p) {
+            return .overlayMove(item.id)
         }
         return nil
     }
@@ -756,6 +857,8 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             view = textItems.first { $0.id == id }?.view
         case .audioLeft(let id), .audioRight(let id):
             view = audioItems.first { $0.id == id }?.view
+        case .overlayLeft(let id), .overlayRight(let id):
+            view = overlayItems.first { $0.id == id }?.view
         default: break
         }
         guard let v = view else { return }
@@ -836,6 +939,24 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
                 bar.duration = ne - ns
                 bar.setNeedsDisplay()
             }
+
+        case .overlayLeft(let id), .overlayRight(let id):
+            guard let o = overlays.first(where: { $0.id == id }) else { break }
+            let maxSrc = OverlayMedia.info(for: o.file)?.duration ?? (o.sourceStart + o.duration)
+            let s0 = o.start, e0 = o.start + o.duration
+            var ns = s0, ne = e0, off = o.sourceStart
+            if case .overlayLeft = d.kind {
+                // у видео нельзя уйти левее начала исходника, у картинки — можно (кадр один)
+                let minStart = o.isImage ? 0 : max(0, s0 - o.sourceStart)
+                ns = min(max(minStart, s0 + deltaSecs), e0 - minDur)
+                if !o.isImage { off = o.sourceStart + (ns - s0) }
+            } else {
+                let maxEnd = o.isImage ? total : min(total, s0 + (maxSrc - o.sourceStart))
+                ne = max(min(maxEnd, e0 + deltaSecs), s0 + minDur)
+            }
+            d.start = ns; d.duration = ne - ns; d.offset = off
+            d.view.frame = CGRect(x: side + CGFloat(ns) * pps, y: d.origFrame.minY,
+                                  width: max(24, CGFloat(ne - ns) * pps), height: d.origFrame.height)
         default: break
         }
         drag = d
@@ -855,6 +976,8 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             onTextTimeChanged?(id, d.start, d.duration)
         case .audioLeft(let id), .audioRight(let id):
             onAudioTimeChanged?(id, d.start, d.offset, d.duration)
+        case .overlayLeft(let id), .overlayRight(let id):
+            onOverlayTimeChanged?(id, d.start, d.offset, d.duration)
         default: break
         }
     }
@@ -913,6 +1036,13 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
                                   grabOffsetX: touchContentX - item.view.frame.minX)
             s.origStart = a.start; s.newStart = a.start; s.duration = a.duration; s.sourceOffset = a.sourceOffset
             state = s
+        case .overlayMove(let id):
+            guard let item = overlayItems.first(where: { $0.id == id }),
+                  let o = overlays.first(where: { $0.id == id }) else { return }
+            var s = MoveDragState(kind: kind, view: item.view, origFrame: item.view.frame,
+                                  grabOffsetX: touchContentX - item.view.frame.minX)
+            s.origStart = o.start; s.newStart = o.start; s.duration = o.duration; s.sourceOffset = o.sourceStart
+            state = s
         default:
             return
         }
@@ -952,7 +1082,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         switch d.kind {
         case .clipMove:
             updateClipSlots(dragCenterX: minX + w / 2)
-        case .textMove, .audioMove:
+        case .textMove, .audioMove, .overlayMove:
             moveDrag?.newStart = Double((minX - side) / pps)
         default:
             break
@@ -1040,6 +1170,14 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             UIView.animate(withDuration: 0.12) { settle(nil) }
             if commit, abs(d.newStart - d.origStart) > 0.001 {
                 onAudioTimeChanged?(id, d.newStart, d.sourceOffset, d.duration)
+            } else {
+                rebuildContent()
+            }
+
+        case .overlayMove(let id):
+            UIView.animate(withDuration: 0.12) { settle(nil) }
+            if commit, abs(d.newStart - d.origStart) > 0.001 {
+                onOverlayTimeChanged?(id, d.newStart, d.sourceOffset, d.duration)
             } else {
                 rebuildContent()
             }

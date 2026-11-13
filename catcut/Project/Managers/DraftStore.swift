@@ -58,7 +58,8 @@ struct Draft: Codable {
     var texts: [TextOverlay]
     var audios: [DraftAudio]
     var project: ProjectSettings?
-    var isAutoSaved: Bool? // <--- Добавили флаг автосейва
+    var isAutoSaved: Bool?
+    var overlays: [VideoOverlay]?  
 }
 
 final class DraftStore {

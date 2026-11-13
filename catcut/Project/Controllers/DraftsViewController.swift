@@ -144,6 +144,7 @@ final class DraftsViewController: UIViewController, UITableViewDataSource, UITab
         cell.subLabel.text = String(format: "%d клип., %d:%02d", d.clips.count, total / 60, total % 60)
             + (d.texts.isEmpty ? "" : " · текст \(d.texts.count)")
             + (d.audios.isEmpty ? "" : " · аудио \(d.audios.count)")
+            + ((d.overlays ?? []).isEmpty ? "" : " · оверлей \(d.overlays!.count)")
         return cell
     }
 

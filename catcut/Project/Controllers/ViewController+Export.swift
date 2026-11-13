@@ -24,7 +24,7 @@ extension ViewController {
         view.addSubview(overlay)
         exportOverlay = overlay
 
-        exporter.export(build: b, clips: clips, texts: texts, project: project,
+        exporter.export(build: b, clips: clips, texts: texts, project: project, overlays: overlays,
                         progress: { [weak self] p in self?.exportOverlay?.setProgress(p) },
                         completion: { [weak self] result in
             guard let self = self else { return }

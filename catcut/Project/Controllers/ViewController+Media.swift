@@ -134,9 +134,9 @@ extension ViewController {
             rebuild()
         } else {
             clampOverlays(total: TimelineLayout(clips: clips).total.secs)
-            build = EditorBuild.make(clips: clips, audios: audios, project: project)
+            build = EditorBuild.make(clips: clips, audios: audios, overlays: overlays, project: project)
             if let b = build, let item = player.currentItem {
-                item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, project: project)
+                item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, project: project)
             }
             reloadTimeline()
         }
@@ -236,5 +236,46 @@ extension ViewController {
                 self.refreshActivePanel()
             }
         }
+    }
+    
+    func importOverlayVideo(_ results: [PHPickerResult]) {
+        guard let r = results.first else { return }
+        let provider = r.itemProvider
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+            provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { [weak self] url, error in
+                guard let url = url, error == nil,
+                      let file = DraftStore.shared.importMedia(from: url, defaultExt: "mov"),
+                      let media = OverlayMedia.info(for: file), media.duration > 0.1 else { return }
+                DispatchQueue.main.async { self?.addOverlay(file: file, isImage: false, sourceDuration: media.duration) }
+            }
+        } else if provider.canLoadObject(ofClass: UIImage.self) {
+            provider.loadObject(ofClass: UIImage.self) { [weak self] obj, _ in
+                guard let img = obj as? UIImage else { return }
+                MediaTools.makeStillVideo(image: img) { name in
+                    guard let name = name else { return }
+                    DispatchQueue.main.async { self?.addOverlay(file: name, isImage: true, sourceDuration: 3.0) }
+                }
+            }
+        }
+    }
+
+    /// Добавляет оверлей на отдельную видео-дорожку, выделяет его и ставит красную палку внутрь.
+    func addOverlay(file: String, isImage: Bool, sourceDuration: Double) {
+        let total = totalSeconds
+        guard total > 0 else { return }
+        pushUndo()
+        let wanted = isImage ? 3.0 : min(sourceDuration, 5.0)
+        var start = displayTime
+        if total - start < 0.5 { start = max(0, total - wanted) }
+        let dur = max(0.3, min(wanted, total - start))
+        let o = VideoOverlay(file: file, isImage: isImage, sourceStart: 0,
+                             sourceDuration: sourceDuration, start: start, duration: dur)
+        overlays.append(o)
+        clearSelection()
+        selectedOverlayID = o.id
+        focusLane = .overlay
+        rebuild(seekTo: ticks(min(start + 0.01, total)))
+        refreshActivePanel()
     }
 }

@@ -50,17 +50,24 @@ final class EditorInstruction: NSObject, AVVideoCompositionInstructionProtocol {
     let to: LayerInfo?
     let transitionID: Int
     let texts: [TextOverlay]
+    let overlays: [OverlayLayerInfo] // Массив оверлеев для этого интервала
     let project: ProjectInfo
 
-    init(timeRange: CMTimeRange, from: LayerInfo, to: LayerInfo?, transitionID: Int, texts: [TextOverlay], project: ProjectInfo) {
+    init(timeRange: CMTimeRange, from: LayerInfo, to: LayerInfo?, transitionID: Int, texts: [TextOverlay], overlays: [OverlayLayerInfo], project: ProjectInfo) {
         self.timeRange = timeRange
         self.from = from
         self.to = to
         self.transitionID = transitionID
         self.texts = texts
+        self.overlays = overlays
         self.project = project
+        
         var ids: [NSValue] = [NSNumber(value: from.trackID)]
         if let to = to { ids.append(NSNumber(value: to.trackID)) }
+        // Добавляем trackID всех активных оверлеев в требуемые треки композитора
+        for o in overlays {
+            ids.append(NSNumber(value: o.trackID))
+        }
         self.requiredSourceTrackIDs = ids
         super.init()
     }
@@ -97,18 +104,18 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
             autoreleasepool {
                 self.lock.lock(); let cancelled = self.shouldCancel; self.lock.unlock()
                 if cancelled { request.finishCancelledRequest(); return }
-
+                
                 guard let instruction = request.videoCompositionInstruction as? EditorInstruction,
                       let outBuffer = request.renderContext.newPixelBuffer() else {
                     request.finish(with: NSError(domain: "Editor", code: -1, userInfo: nil))
                     return
                 }
-
+                
                 let size = request.renderContext.size
                 let rect = CGRect(origin: .zero, size: size)
                 let time = request.compositionTime.secs
                 let proj = instruction.project
-
+                
                 var output: CIImage
                 if let toLayer = instruction.to {
                     let a = self.frame(for: instruction.from, request: request, rect: rect, time: time, project: proj)
@@ -120,8 +127,8 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
                 } else {
                     output = self.frame(for: instruction.from, request: request, rect: rect, time: time, project: proj)
                 }
-
-                // Анимация появления в самом начале и затухания в самом конце
+                
+                // Анимация появления и затухания
                 let black = CIImage(color: CIColor.black).cropped(to: rect)
                 if proj.introID != 0, proj.introDuration > 0.01, time < proj.introDuration {
                     output = TransitionRenderer.render(id: proj.introID, from: black, to: output,
@@ -132,18 +139,55 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
                     output = TransitionRenderer.render(id: proj.outroID, from: output, to: black,
                                                        t: CGFloat(min(1, max(0, p))), rect: rect)
                 }
-
+                
+                // Текст
                 for o in instruction.texts where time >= o.start && time < o.start + o.duration {
                     output = self.overlayText(o, time: time, canvas: size, over: output)
                 }
-
+                
+                // Оверлеи (видео поверх видео)
+                for info in instruction.overlays where time >= info.overlay.start && time < info.overlay.start + info.overlay.duration {
+                    output = self.renderOverlay(info, request: request, canvas: size, over: output)
+                }
+                
                 EditorCompositor.ciContext.render(output.cropped(to: rect), to: outBuffer, bounds: rect,
                                                   colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
                 request.finish(withComposedVideoFrame: outBuffer)
             }
         }
     }
-
+    
+    private func renderOverlay(_ info: OverlayLayerInfo, request: AVAsynchronousVideoCompositionRequest, canvas: CGSize, over base: CIImage) -> CIImage {
+        guard let pb = request.sourceFrame(byTrackID: info.trackID) else { return base }
+        var img = CIImage(cvPixelBuffer: pb).oriented(info.orientation)
+        let e = img.extent
+        guard e.width > 0, e.height > 0 else { return base }
+        
+        let o = info.overlay
+        let targetWidth = canvas.width * o.scale
+        let scale = targetWidth / e.width
+        
+        var t = CGAffineTransform(translationX: -e.midX, y: -e.midY)
+        t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+        t = t.concatenating(CGAffineTransform(rotationAngle: -o.rotation))
+        
+        let cx = o.position.x * canvas.width
+        let cy = canvas.height - o.position.y * canvas.height
+        t = t.concatenating(CGAffineTransform(translationX: cx, y: cy))
+        
+        img = img.transformed(by: t)
+        
+        let currentTime = request.compositionTime.secs
+        let rel = currentTime - o.start
+        var alpha: CGFloat = o.opacity
+        if o.fadeIn > 0, rel < o.fadeIn { alpha *= CGFloat(rel / o.fadeIn) }
+        if o.fadeOut > 0, (o.start + o.duration - currentTime) < o.fadeOut {
+            alpha *= CGFloat((o.start + o.duration - currentTime) / o.fadeOut)
+        }
+        if alpha < 0.999 { img = opacity(img, alpha) }
+        
+        return img.composited(over: base).cropped(to: CGRect(origin: .zero, size: canvas))
+    }
     // MARK: Text overlay (позиция, поворот, анимации появления/исчезания)
 
     private func rgbSplit(_ img: CIImage, d: CGFloat) -> CIImage {

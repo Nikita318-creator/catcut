@@ -257,3 +257,46 @@ extension Collection {
         return indices.contains(index) ? self[index] : nil
     }
 }
+
+// =====================================================================
+// MARK: - Video Overlay (Наложение видео / PiP)
+// =====================================================================
+
+struct VideoOverlay: Codable {
+    var id = UUID()
+    var file: String = ""
+    var isImage: Bool = false
+    
+    // Храним диапазон как секунды (Double), чтобы не ломать Codable на CMTimeRange
+    var sourceStart: Double = 0
+    var sourceDuration: Double = 3.0
+    
+    var start: Double = 0
+    var duration: Double = 3.0
+    
+    // Координаты и геометрия через простые примитивы для Codable
+    var posX: Double = 0.75
+    var posY: Double = 0.25
+    var scale: Double = 0.35
+    var rotation: Double = 0
+    var opacity: Double = 1.0
+    var fadeIn: Double = 0
+    var fadeOut: Double = 0
+    
+    // Удобные хелперы для совместимости с остальным кодом
+    var position: CGPoint {
+        get { CGPoint(x: posX, y: posY) }
+        set { posX = Double(newValue.x); posY = Double(newValue.y) }
+    }
+    
+    var sourceRange: CMTimeRange {
+        get { CMTimeRange(start: ticks(sourceStart), duration: ticks(sourceDuration)) }
+        set { sourceStart = newValue.start.secs; sourceDuration = newValue.duration.secs }
+    }
+}
+
+struct OverlayLayerInfo {
+    let trackID: CMPersistentTrackID
+    let orientation: CGImagePropertyOrientation
+    let overlay: VideoOverlay
+}

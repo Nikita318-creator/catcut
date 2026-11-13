@@ -11,11 +11,12 @@ import SnapKit
 // =====================================================================
 
 enum EditorTool: CaseIterable {
-    case addVideo, split, delete, duplicate, speed, filter, adjust, transition, animation, effects, frame, background, text, audio
+    case addVideo, overlay, split, delete, duplicate, speed, filter, adjust, transition, animation, effects, frame, background, text, audio
 
     var title: String {
         switch self {
         case .addVideo: return "Добавить"
+        case .overlay: return "Overlay" // <-- Новая кнопка на панели
         case .split: return "Разрезать"
         case .delete: return "Удалить"
         case .duplicate: return "Дубль"
@@ -35,6 +36,7 @@ enum EditorTool: CaseIterable {
     var symbol: String {
         switch self {
         case .addVideo: return "plus.square"
+        case .overlay: return "pip.enter" // <-- Иконка «картинка в картинке»
         case .split: return "scissors"
         case .delete: return "trash"
         case .duplicate: return "plus.square.on.square"

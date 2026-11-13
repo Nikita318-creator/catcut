@@ -13,8 +13,8 @@ extension ViewController {
 
     // MARK: Drafts
 
-    func makeDraft(id: UUID, isAuto: Bool) -> Draft {
-        var draft = Draft(
+    func makeDraft(id: UUID, isAuto: Bool, overlays: [VideoOverlay]) -> Draft {
+        let draft = Draft(
             id: id,
             updated: Date(),
             duration: totalSeconds,
@@ -33,7 +33,8 @@ extension ViewController {
                            duration: a.duration, volume: a.volume, effect: a.effect, fadeIn: a.fadeIn, fadeOut: a.fadeOut)
             },
             project: project,
-            isAutoSaved: isAuto
+            isAutoSaved: isAuto,
+            overlays: overlays
         )
         return draft
     }
@@ -65,7 +66,7 @@ extension ViewController {
             currentDraftID = id
         }
         
-        let draftToSave = makeDraft(id: id, isAuto: isAuto)
+        let draftToSave = makeDraft(id: id, isAuto: isAuto, overlays: overlays)
         let first = clips[0]
         DraftStore.shared.save(draftToSave, coverAsset: first.asset, coverTime: first.sourceRange.start.secs + 0.05)
         
@@ -99,7 +100,7 @@ extension ViewController {
     func newProject() {
         pausePlayback()
         closePanel()
-        clips = []; texts = []; audios = []
+        clips = []; texts = []; audios = []; overlays = []
         project = ProjectSettings()
         clearSelection()
         focusLane = .video
@@ -157,9 +158,13 @@ extension ViewController {
             clip.fadeOut = a.fadeOut ?? 0
             loadedAudios.append(clip)
         }
+        let loadedOverlays: [VideoOverlay] = (d.overlays ?? []).filter {
+            FileManager.default.fileExists(atPath: DraftStore.shared.mediaURL($0.file).path)
+        }
         clips = loadedClips
         texts = d.texts
         audios = loadedAudios
+        overlays = loadedOverlays
         project = d.project ?? ProjectSettings()
         clearSelection()
         focusLane = .video
@@ -169,6 +174,8 @@ extension ViewController {
         filterPreviewClipID = nil
         previewPairKey = nil
         rebuild(seekTo: .zero)
-        if loadedClips.count < d.clips.count { showToast("Часть файлов черновика не найдена") }
+        if loadedClips.count < d.clips.count || loadedOverlays.count < (d.overlays?.count ?? 0) {
+            showToast("Часть файлов черновика не найдена")
+        }
     }
 }

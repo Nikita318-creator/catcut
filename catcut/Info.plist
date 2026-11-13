@@ -2,13 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Эти ключи обязаны быть на корневом уровне! -->
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Нужен доступ для выбора видеоклипов и аудиофайлов</string>
+    <string>We need access to your photo library so you can select video clips and audio files.</string>
     
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>Нужен доступ для сохранения готовых роликов в галерею</string>
-
+    <string>We need access to save exported videos directly to your photo library.</string>
+    
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>We need access to speech recognition to transcribe your voice into text.</string>
+    
+    <key>NSMicrophoneUsageDescription</key>
+    <string>We need access to the microphone to record your voice for speech recognition.</string>
+        
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>
