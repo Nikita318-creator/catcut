@@ -247,3 +247,10 @@ struct TimelineLayout {
         return best
     }
 }
+
+extension Collection {
+    /// Безопасный доступ к элементам коллекции по индексу (возвращает nil, если индекс вне границ).
+    subscript(safe index: Index) -> Element? {
+        return indices.contains(index) ? self[index] : nil
+    }
+}

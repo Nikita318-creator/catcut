@@ -421,7 +421,6 @@ final class ViewController: UIViewController {
             self?.updateTextBox()
         }
         timelineView.onClipTrimmed = { [weak self] i, range in self?.commitClipTrim(i, range) }
-        timelineView.onClipTrimmed = { [weak self] i, range in self?.commitClipTrim(i, range) }
         timelineView.onTextTimeChanged = { [weak self] id, s, d in self?.commitTextTime(id, start: s, duration: d) }
         timelineView.onAudioTimeChanged = { [weak self] id, s, off, d in self?.commitAudioTime(id, start: s, offset: off, duration: d) }
         timelineView.onNeedHeight = { [weak self] h in self?.setTimelineHeight(h) }
@@ -438,6 +437,14 @@ final class ViewController: UIViewController {
             self.focusLane = .audio
             self.audioTab = 0 // или нужный индекс вкладки редактора аудио
             self.openPanel(.audio)
+        }
+        timelineView.onClipsReordered = { [weak self] newClips in
+            guard let self = self else { return }
+            self.pushUndo()
+            self.clips = newClips
+            self.clearSelection()
+            self.filterPreviewClipID = nil
+            self.rebuild()
         }
         
         panel.onClose = { [weak self] in self?.closePanel() }
