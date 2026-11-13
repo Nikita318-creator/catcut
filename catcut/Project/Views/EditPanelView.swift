@@ -262,6 +262,8 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
     func configure(title: String, items: [PanelItem], selected: Int?, slider cfg: SliderConfig?,
                    chips: [String]? = nil, selectedChip: Int = 0, extra: String? = nil, keepScroll: Bool = true) {
         titleLabel.text = title
+        
+        let itemsChanged = self.items.count != items.count
         self.items = items
         self.selectedIndex = selected
         self.sliderConfig = cfg
@@ -279,25 +281,25 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         extraButton.isHidden = (extra == nil)
         extraButton.setTitle(extra, for: .normal)
         
-        // Перезагружаем данные и принудительно заставляем collectionView пересчитать layout
-        collectionView.reloadData()
-        collectionView.layoutIfNeeded()
+        // ФИКС: Если количество элементов не изменилось, обновляем видимые ячейки «на лету»
+        // без тяжелого reloadData(), который сбивает скролл нижней панели в ноль.
+        if !itemsChanged {
+            for cell in collectionView.visibleCells {
+                if let indexPath = collectionView.indexPath(for: cell) {
+                    (cell as? PanelItemCell)?.configure(items[indexPath.item], selected: indexPath.item == selectedIndex, provider: previewProvider)
+                }
+            }
+        } else {
+            collectionView.reloadData()
+        }
         
         if !keepScroll {
             if let s = selected, s < items.count, s >= 0 {
-                // Безопасный скролл к выбранному элементу с проверкой границ
                 let maxPossibleIndex = max(0, items.count - 1)
                 let targetIndex = min(s, maxPossibleIndex)
                 collectionView.scrollToItem(at: IndexPath(item: targetIndex, section: 0), at: .centeredHorizontally, animated: false)
             } else {
-                // Если индекс недоступен, сбрасываем скролл в начало во избежание улета в бесконечность
                 collectionView.setContentOffset(.zero, animated: false)
-            }
-        } else {
-            // Даже при keepScroll проверяем, чтобы текущий offset не улетал за новый contentSize
-            let maxOffsetX = max(0, collectionView.contentSize.width - collectionView.bounds.width)
-            if collectionView.contentOffset.x > maxOffsetX {
-                collectionView.setContentOffset(CGPoint(x: maxOffsetX, y: 0), animated: false)
             }
         }
     }

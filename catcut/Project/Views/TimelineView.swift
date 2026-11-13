@@ -282,6 +282,11 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     private var autoScrollLink: CADisplayLink?
     private var autoScrollStartOffset: CGFloat = 0
 
+    /// Текущее время на таймлайне на основе позиции скролла
+    var currentTime: Double {
+        return Double(scrollView.contentOffset.x / pps)
+    }
+    
     override init(frame: CGRect) {
         super.init(frame: frame)
         setup()
@@ -408,6 +413,10 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
 
     func reload(clips: [VideoClip], layout: TimelineLayout, texts: [TextOverlay], audios: [AudioClip],
                 selectedClip: Int?, selectedText: UUID?, selectedAudio: UUID?, focus: TimelineLane) {
+        
+        // 1. ЗАПОМИНАЕМ текущий сдвиг скролла пользователя, чтобы лента не улетала к старту
+        let currentOffsetX = scrollView.contentOffset.x
+        print("currentOffsetX start \(currentOffsetX)")
         // Пока палец тянет край или двигает объект — не пересобираем ленту
         if drag != nil || moveDrag != nil { return }
         self.clips = clips
@@ -418,8 +427,17 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         self.selectedText = selectedText
         self.selectedAudio = selectedAudio
         self.focus = focus
+        
         rebuildContent()
-        setPlayhead(time: lastPlayheadTime, force: true)
+        
+        // 2. ВОССТАНАВЛИВАЕМ скролл на прежнее место вместо слепого сброса в 0 по lastPlayheadTime
+        if currentOffsetX > 0 {
+            scrollView.contentOffset.x = min(currentOffsetX, max(0, scrollView.contentSize.width - scrollView.bounds.width))
+            ruler.offsetX = scrollView.contentOffset.x
+            ruler.setNeedsDisplay()
+        } else {
+            setPlayhead(time: lastPlayheadTime, force: true)
+        }
     }
 
     func setPlayhead(time: Double, force: Bool = false) {

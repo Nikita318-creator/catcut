@@ -556,6 +556,9 @@ final class ViewController: UIViewController {
     // MARK: Player ticks / seeking
 
     func playerTick(_ t: CMTime) {
+        // ИСПРАВЛЕНИЕ: не даем таймеру плеера сбрасывать скролл в 0 во время пересборки/поиска
+        guard !isSeeking else { return }
+        
         let cur = max(0, min(t.secs, totalSeconds))
         timelineView.setPlayhead(time: cur)
         updateTimeLabel(cur)
@@ -667,19 +670,22 @@ final class ViewController: UIViewController {
 
     /// Полная пересборка (меняется структура: клипы, скорость, переходы, звук).
     func rebuild(seekTo target: CMTime? = nil) {
-        let oldTime = target ?? ticks(displayTime)
+        let activeSecs = player.currentTime().secs > 0 ? player.currentTime().secs : timelineView.currentTime
+        let oldTime = target ?? ticks(activeSecs)
+        
         previewToken += 1
-        isSeeking = false
+        isSeeking = true // <-- Взводим флаг, чтобы playerTick молчал при смене item
         pendingSeek = nil
         if let s = selectedClipIndex, s >= clips.count { selectedClipIndex = nil }
         clampOverlays(total: TimelineLayout(clips: clips).total.secs)
         clips.forEach { ThumbnailStore.shared.prepare($0.asset) }
         updateEmptyState()
-
+        
         guard !clips.isEmpty else {
             player.pause()
             player.replaceCurrentItem(with: nil)
             build = nil
+            isSeeking = false
             updatePlayButton()
             updateTimeLabel(0)
             reloadTimeline()
@@ -687,23 +693,29 @@ final class ViewController: UIViewController {
             updateTextBox()
             return
         }
-
+        
         guard let b = EditorBuild.make(clips: clips, audios: audios, project: project) else {
             showToast("Не удалось собрать видео")
+            isSeeking = false
             return
         }
         build = b
         renderSize = b.renderSize
-
+        
         let item = AVPlayerItem(asset: b.composition)
         item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, project: project)
         item.audioMix = b.audioMix
         item.audioTimePitchAlgorithm = .spectral
         player.pause()
         player.replaceCurrentItem(with: item)
-
+        
         let t = CMTimeMinimum(CMTimeMaximum(oldTime, .zero), b.layout.total)
-        player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)
+        player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.isSeeking = false // <-- Снимаем флаг только после успешного seek нового айтема
+            }
+        }
+        
         updateTimeLabel(t.secs)
         updatePlayButton()
         reloadTimeline()
@@ -711,7 +723,7 @@ final class ViewController: UIViewController {
         updateTextBox()
         ensureProcessedAudio()
     }
-
+    
     /// Лёгкое обновление (фильтры, текст): композиция та же, меняем только инструкции.
     func refreshVideoComposition() {
         guard let b = build, let item = player.currentItem else { return }
