@@ -131,8 +131,11 @@ final class TextInputView: UIView, UITextViewDelegate {
         doneButton.alpha = empty ? 0.4 : 1
     }
 
-    func textViewDidChange(_ textView: UITextView) { updateState() }
-
+    func textViewDidChange(_ textView: UITextView) {
+        if dictation.isRunning { dictation.stop() }   // пользователь печатает — диктовка не должна перезаписывать
+        updateState()
+    }
+    
     @objc private func keyboardChanged(_ n: Notification) {
         guard let end = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
         let inSelf = convert(end, from: nil)
@@ -147,8 +150,15 @@ final class TextInputView: UIView, UITextViewDelegate {
             dictation.stop()
         } else {
             baseText = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            dictation.locale = keyboardLocale()
             dictation.start()
         }
+    }
+    
+    private func keyboardLocale() -> Locale? {
+        guard let lang = textView.textInputMode?.primaryLanguage,
+              lang != "emoji", lang != "dictation" else { return nil }
+        return Locale(identifier: lang)
     }
 
     @objc private func cancelTapped() { close() }

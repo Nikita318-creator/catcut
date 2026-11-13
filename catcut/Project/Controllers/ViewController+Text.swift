@@ -37,6 +37,7 @@ extension ViewController {
                 PanelItem(title: "Добавить", symbol: "plus"),
                 PanelItem(title: "Изменить", symbol: "pencil"),
                 PanelItem(title: "Дубль", symbol: "plus.square.on.square"),
+                PanelItem(title: "Автосубтитры", symbol: "captions.bubble"),
                 PanelItem(title: "Удалить", symbol: "trash")
             ]
             if let t = t {
@@ -160,6 +161,8 @@ extension ViewController {
                 texts.append(t)
                 selectedTextID = t.id
                 textsChanged()
+            case 3:
+                didTapAutoSubtitles()
             default:
                 guard let id = selectedTextID else { showToast("Выберите текст на дорожке под видео"); return }
                 pushUndo()

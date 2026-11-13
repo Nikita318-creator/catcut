@@ -195,6 +195,7 @@ struct TextOverlay: Codable {
     var animIn: Int = 0
     var animOut: Int = 0
     var animDuration: Double = 0.5
+    var isAutoSubtitle: Bool? = nil
 }
 
 /// Раскладка клипов на таймлайне: старты, длительности и перекрытия под переходы.
