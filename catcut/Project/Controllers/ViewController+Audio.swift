@@ -59,6 +59,16 @@ extension ViewController {
         case 2:
             items = AudioEffect.allCases.map { PanelItem(title: $0.title, symbol: $0.symbol) }
             sel = effect
+            // Если выбран какой-то эффект (не 0), показываем ползунок его мощности:
+            if effect != 0 {
+                let currentIntensity = (target.map { t in
+                    switch t {
+                    case .audio(let i): return Double(audios[i].effectIntensity)
+                    case .clip(let i): return Double(clips[i].audioEffectIntensity)
+                    }
+                }) ?? 0.5
+                cfg = SliderConfig(title: "Мощность эффекта", min: 0.1, max: 1.0, value: Float(currentIntensity)) { "\(Int($0 * 100))%" }
+            }
         case 3:
             items = [PanelItem(title: "Без появления", symbol: "xmark")]
             cfg = SliderConfig(title: "Появление", min: 0, max: 5, value: Float(fadeIn)) { String(format: "%.1fс", Double($0)) }
@@ -149,12 +159,13 @@ extension ViewController {
     func ensureProcessedAudio() {
         for c in clips where c.audioEffect != 0 && c.processedAudio == nil {
             guard let eff = AudioEffect(rawValue: c.audioEffect) else { continue }
-            let key = "c-\(c.id)-\(c.audioEffect)"
+            let key = "c-\(c.id)-\(c.audioEffect)-\(Int(c.audioEffectIntensity * 10))"
             guard !processingKeys.contains(key) else { continue }
             processingKeys.insert(key)
             showToast("Обработка звука…")
             let id = c.id
-            AudioFXStore.process(asset: c.asset, effect: eff) { [weak self] result in
+            let intensity = c.audioEffectIntensity
+            AudioFXStore.process(asset: c.asset, effect: eff, intensity: intensity) { [weak self] result in
                 guard let self = self else { return }
                 self.processingKeys.remove(key)
                 guard let result = result, let i = self.clips.firstIndex(where: { $0.id == id }),
@@ -165,12 +176,13 @@ extension ViewController {
         }
         for a in audios where a.effect != 0 && a.processed == nil {
             guard let eff = AudioEffect(rawValue: a.effect) else { continue }
-            let key = "a-\(a.id)-\(a.effect)"
+            let key = "a-\(a.id)-\(a.effect)-\(Int(a.effectIntensity * 10))"
             guard !processingKeys.contains(key) else { continue }
             processingKeys.insert(key)
             showToast("Обработка звука…")
             let id = a.id
-            AudioFXStore.process(asset: a.asset, effect: eff) { [weak self] result in
+            let intensity = a.effectIntensity
+            AudioFXStore.process(asset: a.asset, effect: eff, intensity: intensity) { [weak self] result in
                 guard let self = self else { return }
                 self.processingKeys.remove(key)
                 guard let result = result, let i = self.audios.firstIndex(where: { $0.id == id }),

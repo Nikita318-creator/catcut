@@ -476,11 +476,44 @@ final class ViewController: UIViewController {
                 completion(nil)
             }
         }
+        panel.onSliderChanged = { [weak self] value in
+            guard let self = self else { return }
+            if self.activePanel == .audio {
+                if self.audioTab == 1 {
+                    // Громкость
+                    self.setAudioParam { v, _, _, _ in v = value }
+                } else if self.audioTab == 2 {
+                    // Мощность аудиоэффекта
+                    self.setAudioIntensity(value)
+                } else if self.audioTab == 3 {
+                    // Появление (Fade In)
+                    self.setAudioParam { _, _, fi, _ in fi = Double(value) }
+                } else if self.audioTab == 4 {
+                    // Затухание (Fade Out)
+                    self.setAudioParam { _, _, _, fo in fo = Double(value) }
+                }
+            }
+        }
         
         ThumbnailStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
         WaveformStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
     }
 
+    func setAudioIntensity(_ intensity: Float) {
+        guard let target = audioTarget() else { return }
+        pushUndo()
+        switch target {
+        case .audio(let i):
+            audios[i].effectIntensity = intensity
+            audios[i].processed = nil // Сбрасываем кэш для пересчета волны и звука
+        case .clip(let i):
+            clips[i].audioEffectIntensity = intensity
+            clips[i].processedAudio = nil // Сбрасываем кэш
+        }
+        rebuild()
+        refreshActivePanel(keepScroll: true)//Missing argument label 'keepScroll:' in call
+    }
+    
     func animationPreviewImage(for key: String, completion: @escaping (UIImage?) -> Void) {
         // Извлекаем id анимации из ключа вида "anim-1"
         let components = key.split(separator: "-")

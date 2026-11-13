@@ -80,6 +80,7 @@ struct VideoClip {
     // Звук клипа (у каждого куска свой)
     var volume: Float = 1.0               // 0 = без звука, до 3 = усиление
     var audioEffect: Int = 0
+    var audioEffectIntensity: Float = 0.5
     var fadeIn: Double = 0
     var fadeOut: Double = 0
     var processedAudio: AVAsset? = nil    // звук после эффекта (не сохраняется, пересоздаётся)
@@ -104,6 +105,7 @@ struct AudioClip {
     var duration: Double
     var volume: Float = 1.0               // до 3 = усиление
     var effect: Int = 0
+    var effectIntensity: Float = 0.5
     var fadeIn: Double = 0
     var fadeOut: Double = 0
     var processed: AVAsset? = nil

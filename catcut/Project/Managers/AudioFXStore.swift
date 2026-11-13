@@ -49,67 +49,76 @@ enum AudioEffect: Int, CaseIterable {
 
 enum AudioFXStore {
 
-    private static func nodes(for effect: AudioEffect) -> [AVAudioNode] {
+    private static func nodes(for effect: AudioEffect, intensity: Float) -> [AVAudioNode] {
+        let wetMix = CGFloat(intensity) * 100.0 // от 0 до 100%
         switch effect {
         case .none:
             return []
         case .echo:
             let d = AVAudioUnitDelay()
-            d.delayTime = 0.28; d.feedback = 45; d.wetDryMix = 40; d.lowPassCutoff = 8000
+            d.delayTime = TimeInterval(0.1 + 0.3 * intensity)
+            d.feedback = 20 + 60 * intensity
+            d.wetDryMix = Float(wetMix)
             return [d]
         case .hall:
-            let r = AVAudioUnitReverb(); r.loadFactoryPreset(.largeHall); r.wetDryMix = 45
+            let r = AVAudioUnitReverb()
+            r.loadFactoryPreset(.largeHall)
+            r.wetDryMix = Float(wetMix)
             return [r]
         case .cathedral:
-            let r = AVAudioUnitReverb(); r.loadFactoryPreset(.cathedral); r.wetDryMix = 60
+            let r = AVAudioUnitReverb()
+            r.loadFactoryPreset(.cathedral)
+            r.wetDryMix = Float(wetMix)
             return [r]
         case .robot:
             let d = AVAudioUnitDelay()
-            d.delayTime = 0.015; d.feedback = 70; d.wetDryMix = 55
-            let p = AVAudioUnitTimePitch(); p.pitch = -200
+            d.delayTime = 0.015
+            d.feedback = 40 + 40 * intensity
+            d.wetDryMix = Float(wetMix)
+            let p = AVAudioUnitTimePitch()
+            p.pitch = -200 * intensity
             return [d, p]
         case .chipmunk:
-            let p = AVAudioUnitTimePitch(); p.pitch = 800
+            let p = AVAudioUnitTimePitch()
+            p.pitch = 200 + 800 * intensity
             return [p]
         case .deep:
-            let p = AVAudioUnitTimePitch(); p.pitch = -600
+            let p = AVAudioUnitTimePitch()
+            p.pitch = -200 - 600 * intensity
             return [p]
         case .phone:
             let eq = AVAudioUnitEQ(numberOfBands: 2)
-            eq.bands[0].filterType = .highPass; eq.bands[0].frequency = 500; eq.bands[0].bypass = false
-            eq.bands[1].filterType = .lowPass; eq.bands[1].frequency = 3400; eq.bands[1].bypass = false
+            eq.bands[0].filterType = .highPass; eq.bands[0].frequency = 300 + 300 * (1 - intensity); eq.bands[0].bypass = false
+            eq.bands[1].filterType = .lowPass; eq.bands[1].frequency = 4000 - 1000 * (1 - intensity); eq.bands[1].bypass = false
             return [eq]
         case .megaphone:
             let eq = AVAudioUnitEQ(numberOfBands: 2)
-            eq.bands[0].filterType = .highPass; eq.bands[0].frequency = 700; eq.bands[0].bypass = false
+            eq.bands[0].filterType = .highPass; eq.bands[0].frequency = 500; eq.bands[0].bypass = false
             eq.bands[1].filterType = .lowPass; eq.bands[1].frequency = 4500; eq.bands[1].bypass = false
-            let dist = AVAudioUnitDistortion(); dist.loadFactoryPreset(.speechGoldenPi); dist.wetDryMix = 25
+            let dist = AVAudioUnitDistortion(); dist.loadFactoryPreset(.speechGoldenPi); dist.wetDryMix = Float(wetMix)
             return [eq, dist]
         case .underwater:
             let eq = AVAudioUnitEQ(numberOfBands: 1)
-            eq.bands[0].filterType = .lowPass; eq.bands[0].frequency = 500; eq.bands[0].bypass = false
-            let d = AVAudioUnitDelay(); d.delayTime = 0.06; d.feedback = 35; d.wetDryMix = 25
-            return [eq, d]
+            eq.bands[0].filterType = .lowPass; eq.bands[0].frequency = 200 + 800 * (1 - intensity); eq.bands[0].bypass = false
+            return [eq]
         case .bass:
             let eq = AVAudioUnitEQ(numberOfBands: 1)
-            eq.bands[0].filterType = .lowShelf; eq.bands[0].frequency = 140; eq.bands[0].gain = 12; eq.bands[0].bypass = false
+            eq.bands[0].filterType = .lowShelf; eq.bands[0].frequency = 140; eq.bands[0].gain = 6 + 12 * intensity; eq.bands[0].bypass = false
             return [eq]
         case .loud:
             let eq = AVAudioUnitEQ(numberOfBands: 1)
-            eq.globalGain = 10
-            eq.bands[0].filterType = .parametric; eq.bands[0].frequency = 2500; eq.bands[0].bandwidth = 1; eq.bands[0].gain = 3
-            eq.bands[0].bypass = false
+            eq.globalGain = 5 + 15 * intensity
             return [eq]
         }
     }
 
-    private static func renderOffline(input: URL, effect: AudioEffect, output: URL) throws {
+    private static func renderOffline(input: URL, effect: AudioEffect, intensity: Float, output: URL) throws {
         let file = try AVAudioFile(forReading: input)
         let format = file.processingFormat
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
         engine.attach(player)
-        let fx = nodes(for: effect)
+        let fx = nodes(for: effect, intensity: intensity) // <--- Теперь передаем интенсивность сюда!
         fx.forEach { engine.attach($0) }
         let chain: [AVAudioNode] = [player] + fx
         for i in 0..<(chain.count - 1) { engine.connect(chain[i], to: chain[i + 1], format: format) }
@@ -140,12 +149,13 @@ enum AudioFXStore {
         engine.stop()
     }
 
-    /// Обрабатывает звук файла эффектом. Результат кэшируется (имя = файл + эффект).
-    static func process(asset: AVAsset, effect: AudioEffect, completion: @escaping (AVAsset?) -> Void) {
+    /// Обрабатывает звук файла эффектом. Результат кэшируется.
+    static func process(asset: AVAsset, effect: AudioEffect, intensity: Float, completion: @escaping (AVAsset?) -> Void) {
         guard effect != .none, let urlAsset = asset as? AVURLAsset,
               asset.tracks(withMediaType: .audio).first != nil else { completion(nil); return }
         let base = urlAsset.url.deletingPathExtension().lastPathComponent
-        let outURL = DraftStore.shared.mediaDir.appendingPathComponent("fx_\(base)_\(effect.rawValue).caf")
+        let intKey = Int(intensity * 10)
+        let outURL = DraftStore.shared.mediaDir.appendingPathComponent("fx_\(base)_\(effect.rawValue)_\(intKey).caf")
         if FileManager.default.fileExists(atPath: outURL.path) {
             completion(AVAsset(url: outURL))
             return
@@ -161,7 +171,7 @@ enum AudioFXStore {
                 sem.wait()
                 if export.status == .completed {
                     do {
-                        try renderOffline(input: tmp, effect: effect, output: outURL)
+                        try renderOffline(input: tmp, effect: effect, intensity: intensity, output: outURL)
                         result = AVAsset(url: outURL)
                     } catch {
                         try? FileManager.default.removeItem(at: outURL)

@@ -115,8 +115,8 @@ final class EditorBuild {
                 }
                 let p = audioParams[slot]
                 let half = dur.secs / 2
-                let inD = floorTicks(min(max(layout.overlapIn(i).secs, clip.fadeIn), half))
-                let outD = floorTicks(min(max(layout.overlapOut(i).secs, clip.fadeOut), half))
+                let inD = floorTicks(min(clip.fadeIn, half))
+                let outD = floorTicks(min(clip.fadeOut, half))
                 if inD > .zero {
                     p.setVolumeRamp(fromStartVolume: 0, toEndVolume: clip.volume, timeRange: CMTimeRange(start: start, duration: inD))
                 } else {
