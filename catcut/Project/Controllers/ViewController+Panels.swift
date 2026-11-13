@@ -519,7 +519,13 @@ extension ViewController {
         case 3: sel = 3 + (bgSwatches.firstIndex(of: c.bgColor) ?? 0)
         default: sel = 0
         }
-        panel.configure(title: "Вырезать фон · клип \(i + 1)", items: items, selected: sel, slider: nil,
+        
+        // Создаем конфиг слайдера глубины (показываем только если включен какой-то фон/вырезание, то есть bgMode > 0)
+        let cfg: SliderConfig? = c.bgMode > 0 ? SliderConfig(title: "Глубина", min: 0.0, max: 1.0, value: c.bgDepthThreshold) {
+            String(format: "%.0f%%", Double($0) * 100)
+        } : nil
+        
+        panel.configure(title: "Вырезать фон · клип \(i + 1)", items: items, selected: sel, slider: cfg,
                         extra: c.bgMode == 0 ? nil : "Ко всем", keepScroll: keep)
     }
 
@@ -729,6 +735,10 @@ extension ViewController {
             case (4, .clip(let i)): clips[i].fadeOut = Double(v)
             default: break
             }
+        case .background?:
+            guard let i = currentClipIndex() else { return }
+            clips[i].bgDepthThreshold = v
+            refreshVideoComposition()
         default: break
         }
     }

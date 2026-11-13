@@ -31,6 +31,7 @@ struct DraftClip: Codable {
     var bgMode: Int?
     var bgFile: String?
     var bgColor: Int?
+    var bgDepthThreshold: Float? 
     var audioEffect: Int?
     var fadeIn: Double?
     var fadeOut: Double?

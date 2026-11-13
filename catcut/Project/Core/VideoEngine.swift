@@ -24,6 +24,7 @@ struct LayerInfo {
     let bgMode: Int
     let bgImage: CIImage?
     let bgColor: CIColor?
+    let bgDepthThreshold: Float
 }
 
 struct ProjectInfo {
@@ -271,16 +272,43 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
         let e = img.extent
         let m0 = rawMask.extent
         guard m0.width > 0, m0.height > 0 else { return img }
-        let mask = rawMask
+        
+        let mBase = CGRect(x: 0, y: 0, width: m0.width, height: m0.height)
+        let t = Double(max(0, min(1, layer.bgDepthThreshold)))
+
+        // 1) Блюр в родном разрешении маски: усредняет покадровый шум Vision
+        //    и даёт градиент, по которому можно двигать границу.
+        var mask = rawMask
             .transformed(by: CGAffineTransform(translationX: -m0.minX, y: -m0.minY))
+            .clampedToExtent()
+            .applyingGaussianBlur(sigma: Double(max(m0.width, m0.height)) * 0.04)
+            .cropped(to: mBase)
             .transformed(by: CGAffineTransform(scaleX: e.width / m0.width, y: e.height / m0.height))
             .clampedToExtent()
-            .applyingGaussianBlur(sigma: max(1, Double(e.height) * 0.0015))
+        
+        // 2) Порог. 0.5 = граница ровно там, где определил Vision.
+        //    Вправо: порог ниже, область человека шире. Влево: порог выше, область уже.
+        let cut = 0.5 - (t - 0.5) * 0.8
+        let k = 12.0                       // резкость края: больше значение, резче край
+        let b = CGFloat(0.5 - k * cut)
+        
+        mask = mask
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: CGFloat(k), y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: CGFloat(k), y: 0, z: 0, w: 0),
+                "inputBVector": CIVector(x: CGFloat(k), y: 0, z: 0, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                "inputBiasVector": CIVector(x: b, y: b, z: b, w: 0)
+            ])
+            .applyingFilter("CIColorClamp", parameters: [
+                "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)
+            ])
             .cropped(to: e)
-
-        // Человека в кадре нет — оставляем кадр как есть (раньше фон перекрывал всё видео)
+        
+        // Человека в кадре нет — оставляем кадр как есть
         if maskCoverage(mask, extent: e) < 0.01 { return img }
-
+        
         var bg: CIImage
         switch layer.bgMode {
         case 1:

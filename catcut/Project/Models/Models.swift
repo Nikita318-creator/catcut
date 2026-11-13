@@ -55,7 +55,8 @@ struct VideoClip {
     /// Какой кусок исходника используем (в шкале 600).
     var sourceRange: CMTimeRange
     var speed: Float = 1.0
-
+    var bgDepthThreshold: Float = 0.5 // Порог отсечения маски
+    
     // Цвет
     var filterID: Int = 0                 // 0 — без фильтра, иначе номер из FilterCatalog
     var filterIntensity: Float = 1.0

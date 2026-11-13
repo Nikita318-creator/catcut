@@ -25,7 +25,7 @@ extension ViewController {
                           transitionDuration: c.transitionDuration, volume: c.volume,
                           isImage: c.isImage, adjust: c.adjust, look: c.look, flipH: c.flipH, flipV: c.flipV,
                           rotation: c.rotation, zoom: c.zoom, bgMode: c.bgMode, bgFile: c.bgFile, bgColor: c.bgColor,
-                          audioEffect: c.audioEffect, fadeIn: c.fadeIn, fadeOut: c.fadeOut)
+                          bgDepthThreshold: c.bgDepthThreshold, audioEffect: c.audioEffect, fadeIn: c.fadeIn, fadeOut: c.fadeOut)
             },
             texts: texts,
             audios: audios.map { a in
@@ -133,6 +133,7 @@ extension ViewController {
             clip.bgMode = c.bgMode ?? 0
             clip.bgFile = c.bgFile
             clip.bgColor = c.bgColor ?? 0
+            clip.bgDepthThreshold = c.bgDepthThreshold ?? 0.5
             clip.transitionID = c.transitionID
             clip.transitionDuration = c.transitionDuration
             clip.volume = c.volume

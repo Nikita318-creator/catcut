@@ -188,7 +188,8 @@ final class EditorBuild {
                              preset: FilterCatalog.preset(c.filterID)?.adjust, intensity: c.filterIntensity,
                              custom: c.adjust, look: VideoLook(rawValue: c.look) ?? .none,
                              flipH: c.flipH, flipV: c.flipV, rotation: c.rotation, zoom: c.zoom,
-                             bgMode: c.bgMode, bgImage: bgImg, bgColor: bgCol)
+                             bgMode: c.bgMode, bgImage: bgImg, bgColor: bgCol,
+                             bgDepthThreshold: c.bgDepthThreshold) // <-- ПРОКИДЫВАЕМ ЗНАЧЕНИЕ СЮДА
         }
 
         let info = ProjectInfo(fillMode: project.fillMode, blurBackground: project.blurBackground,

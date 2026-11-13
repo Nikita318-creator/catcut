@@ -492,6 +492,8 @@ final class ViewController: UIViewController {
                     // Затухание (Fade Out)
                     self.setAudioParam { _, _, _, fo in fo = Double(value) }
                 }
+            } else {
+                self.sliderChanged(value)
             }
         }
         
