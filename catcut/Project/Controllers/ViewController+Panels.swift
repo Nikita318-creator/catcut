@@ -59,7 +59,10 @@ extension ViewController {
         guard let i = currentClipIndex() else { closePanel(); return }
         let items = speedPresets.map { PanelItem(title: $0 == 1 ? "Обычная" : "\($0)x", badge: String(format: "%gx", Double($0))) }
         let sel = speedPresets.firstIndex { abs($0 - clips[i].speed) < 0.001 }
-        let cfg = SliderConfig(title: "Скорость", min: 0.1, max: 8, value: clips[i].speed) { String(format: "%.2fx", Double($0)) }
+        
+        // ИЗМЕНЕНИЕ: формат %.1fx вместо %.2fx
+        let cfg = SliderConfig(title: "Скорость", min: 0.1, max: 8, value: clips[i].speed) { String(format: "%.1fx", Double($0)) }
+        
         panel.configure(title: "Скорость · клип \(i + 1)", items: items, selected: sel, slider: cfg, keepScroll: keep)
     }
 
@@ -685,7 +688,7 @@ extension ViewController {
     func sliderChanged(_ v: Float) {
         switch activePanel {
         case .speed?:
-            if let i = currentClipIndex() { clips[i].speed = max(0.1, (v * 20).rounded() / 20) }
+            if let i = currentClipIndex() { clips[i].speed = max(0.1, (v * 10).rounded() / 10) }
         case .filter?:
             guard let i = currentClipIndex() else { return }
             clips[i].filterIntensity = v

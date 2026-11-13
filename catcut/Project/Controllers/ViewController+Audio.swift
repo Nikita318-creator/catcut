@@ -165,15 +165,27 @@ extension ViewController {
             showToast("Обработка звука…")
             let id = c.id
             let intensity = c.audioEffectIntensity
+            
             AudioFXStore.process(asset: c.asset, effect: eff, intensity: intensity) { [weak self] result in
                 guard let self = self else { return }
                 self.processingKeys.remove(key)
                 guard let result = result, let i = self.clips.firstIndex(where: { $0.id == id }),
                       self.clips[i].audioEffect == eff.rawValue else { return }
+                
+                // 1. Очищаем старый кэш для нового ассета на всякий случай
+                WaveformStore.shared.clearCache(for: result)
+                
+                // 2. Сохраняем обработанный ассет
                 self.clips[i].processedAudio = result
-                self.rebuild()
+                
+                // 3. Запускаем генерацию пиков для нового ассета
+                WaveformStore.shared.prepare(result)
+                
+                let activeSecs = self.player.currentTime().secs > 0 ? self.player.currentTime().secs : self.timelineView.currentTime
+                self.rebuild(seekTo: ticks(activeSecs))
             }
         }
+        
         for a in audios where a.effect != 0 && a.processed == nil {
             guard let eff = AudioEffect(rawValue: a.effect) else { continue }
             let key = "a-\(a.id)-\(a.effect)-\(Int(a.effectIntensity * 10))"
@@ -182,13 +194,24 @@ extension ViewController {
             showToast("Обработка звука…")
             let id = a.id
             let intensity = a.effectIntensity
+            
             AudioFXStore.process(asset: a.asset, effect: eff, intensity: intensity) { [weak self] result in
                 guard let self = self else { return }
                 self.processingKeys.remove(key)
                 guard let result = result, let i = self.audios.firstIndex(where: { $0.id == id }),
                       self.audios[i].effect == eff.rawValue else { return }
+                
+                // 1. Очищаем кэш для результирующего ассета
+                WaveformStore.shared.clearCache(for: result)
+                
+                // 2. Сохраняем
                 self.audios[i].processed = result
-                self.rebuild()
+                
+                // 3. Готовим пики
+                WaveformStore.shared.prepare(result)
+                
+                let activeSecs = self.player.currentTime().secs > 0 ? self.player.currentTime().secs : self.timelineView.currentTime
+                self.rebuild(seekTo: ticks(activeSecs))
             }
         }
     }

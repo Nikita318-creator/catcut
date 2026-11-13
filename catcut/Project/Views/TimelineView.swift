@@ -106,6 +106,9 @@ final class AudioBarView: UIView {
     var offset: Double = 0
     var duration: Double = 1
     var title: String = ""
+    var volume: Float = 1.0
+    var fadeIn: Double = 0.0
+    var fadeOut: Double = 0.0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -128,8 +131,29 @@ final class AudioBarView: UIView {
             var i = Int(offset * Double(pps))
             var px: CGFloat = 0
             let midY = h / 2 + 5
+            
             while px < w && i < peaks.count {
-                let bh = max(1.5, CGFloat(peaks[i]) * (h - 14))
+                // Текущая секунда внутри этой аудиодорожки
+                let t = Double(px) / w * duration
+                
+                // Расчет огибающей для появления (Fade In) и затухания (Fade Out)
+                var envelope: CGFloat = 1.0
+                if fadeIn > 0, t < fadeIn {
+                    envelope = CGFloat(t / fadeIn)
+                }
+                if fadeOut > 0, t > (duration - fadeOut) {
+                    let remaining = duration - t
+                    envelope = CGFloat(max(0, remaining / fadeOut))
+                }
+                
+                // Учет громкости (volume от 0 до 3)
+                let volFactor = CGFloat(max(0, volume))
+                
+                // Итоговая высота пика с учетом громкости и фейдов
+                let rawPeak = CGFloat(peaks[min(i, peaks.count - 1)])
+                let finalPeak = rawPeak * volFactor * envelope
+                let bh = max(1.5, finalPeak * (h - 14))
+                
                 ctx.fill(CGRect(x: px, y: midY - bh / 2, width: barW, height: bh))
                 px += step
                 i += 1
@@ -592,7 +616,13 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             bar.title = a.title
             bar.offset = a.sourceOffset
             bar.duration = a.duration
-            bar.peaks = WaveformStore.shared.peaks(for: a.asset) ?? []
+            
+            // ПРОКИДЫВАЕМ ПАРАМЕТРЫ ДЛЯ ВИЗУАЛЬНОГО ИЗМЕНЕНИЯ ВОЛНЫ:
+            bar.volume = a.volume
+            bar.fadeIn = a.fadeIn
+            bar.fadeOut = a.fadeOut
+            
+            bar.peaks = WaveformStore.shared.peaks(for: a.processed ?? a.asset) ?? []
             if a.id == selectedAudio {
                 bar.layer.borderWidth = 2
                 bar.layer.borderColor = UIColor.white.cgColor

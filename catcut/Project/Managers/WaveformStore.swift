@@ -17,6 +17,10 @@ final class WaveformStore {
     private var cache: [ObjectIdentifier: [Float]] = [:]
     private var pending = Set<ObjectIdentifier>()
 
+    func prepare(_ asset: AVAsset) {
+        _ = peaks(for: asset)
+    }
+    
     func peaks(for asset: AVAsset) -> [Float]? {
         let key = ObjectIdentifier(asset)
         if let p = cache[key] { return p }
@@ -34,6 +38,12 @@ final class WaveformStore {
         return nil
     }
 
+    func clearCache(for asset: AVAsset) {
+        let key = ObjectIdentifier(asset)
+        cache.removeValue(forKey: key)
+        pending.remove(key)
+    }
+    
     private static func compute(_ asset: AVAsset) -> [Float]? {
         guard let track = asset.tracks(withMediaType: .audio).first,
               let reader = try? AVAssetReader(asset: asset) else { return nil }
