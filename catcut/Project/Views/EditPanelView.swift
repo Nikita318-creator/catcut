@@ -62,16 +62,18 @@ final class PanelItemCell: UICollectionViewCell {
         box.addSubview(iconView)
 
         badgeLabel.textColor = .white
-        badgeLabel.font = .systemFont(ofSize: 15, weight: .bold)
+        badgeLabel.font = .systemFont(ofSize: 18, weight: .bold)
+        badgeLabel.adjustsFontSizeToFitWidth = true
+        badgeLabel.minimumScaleFactor = 0.7
         badgeLabel.textAlignment = .center
         box.addSubview(badgeLabel)
 
-        swatchView.layer.cornerRadius = 14
+        swatchView.layer.cornerRadius = 18
         swatchView.layer.borderWidth = 1
         swatchView.layer.borderColor = UIColor(white: 1, alpha: 0.4).cgColor
         box.addSubview(swatchView)
 
-        titleLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
         titleLabel.textColor = .lightGray
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 2
@@ -81,21 +83,21 @@ final class PanelItemCell: UICollectionViewCell {
 
         box.snp.makeConstraints { make in
             make.top.centerX.equalToSuperview()
-            make.size.equalTo(56)
+            make.size.equalTo(68)
         }
         heartButton.addTarget(self, action: #selector(heartTapped), for: .touchUpInside)
         contentView.addSubview(heartButton)
         heartButton.snp.makeConstraints { make in
-            make.top.equalTo(box).offset(-6)
-            make.trailing.equalTo(box).offset(6)
-            make.size.equalTo(26)
+            make.top.equalTo(box).offset(-8)
+            make.trailing.equalTo(box).offset(8)
+            make.size.equalTo(32)
         }
         imageView.snp.makeConstraints { $0.edges.equalToSuperview() }
-        iconView.snp.makeConstraints { make in make.center.equalToSuperview(); make.size.equalTo(24) }
-        badgeLabel.snp.makeConstraints { $0.edges.equalToSuperview() }
-        swatchView.snp.makeConstraints { make in make.center.equalToSuperview(); make.size.equalTo(28) }
+        iconView.snp.makeConstraints { make in make.center.equalToSuperview(); make.size.equalTo(32) }
+        badgeLabel.snp.makeConstraints { $0.edges.equalToSuperview().inset(4) }
+        swatchView.snp.makeConstraints { make in make.center.equalToSuperview(); make.size.equalTo(36) }
         titleLabel.snp.makeConstraints { make in
-            make.top.equalTo(box.snp.bottom).offset(5)
+            make.top.equalTo(box.snp.bottom).offset(6)
             make.leading.trailing.equalToSuperview()
         }
     }
@@ -152,6 +154,11 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
     private let slider = UISlider()
     private let sliderValue = UILabel()
     private var collectionView: UICollectionView!
+    private let gridLayout = UICollectionViewFlowLayout()
+    private let gridInset: CGFloat = 14
+    private let gridGap: CGFloat = 8
+    private let gridMinItemWidth: CGFloat = 80
+    private let gridItemHeight: CGFloat = 112
 
     private var items: [PanelItem] = []
     private var selectedIndex: Int?
@@ -171,36 +178,50 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
     var onSliderChanged: ((Float) -> Void)?
     var onSliderEnded: ((Float) -> Void)?
 
-    var preferredHeight: CGFloat { 38 + 106 + (sliderConfig == nil ? 0 : 34) + (hasChips ? 36 : 0) }
+    /// Панель — как bottom sheet: фиксированная треть экрана (не меньше 320),
+    /// слайдер и чипсы забирают место у сетки, а не раздувают панель.
+    var preferredHeight: CGFloat { max(320, (UIScreen.main.bounds.height / 3).rounded()) }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = Theme.panel
+        layer.cornerRadius = 20
+        layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        clipsToBounds = true
 
         titleLabel.textColor = .white
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        closeButton.setImage(UIImage(systemName: "checkmark"), for: .normal)
+        titleLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        titleLabel.adjustsFontSizeToFitWidth = true
+        titleLabel.minimumScaleFactor = 0.8
+        closeButton.setImage(UIImage(systemName: "checkmark",
+                                     withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)), for: .normal)
         closeButton.tintColor = .white
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
 
         sliderCaption.textColor = .lightGray
-        sliderCaption.font = .systemFont(ofSize: 12)
+        sliderCaption.font = .systemFont(ofSize: 14)
+        sliderCaption.adjustsFontSizeToFitWidth = true
+        sliderCaption.minimumScaleFactor = 0.7
         sliderValue.textColor = .white
-        sliderValue.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        sliderValue.font = .monospacedDigitSystemFont(ofSize: 14, weight: .medium)
         sliderValue.textAlignment = .right
         slider.minimumTrackTintColor = Theme.accent
         slider.addTarget(self, action: #selector(sliderDown), for: .touchDown)
         slider.addTarget(self, action: #selector(sliderMoved), for: .valueChanged)
         slider.addTarget(self, action: #selector(sliderUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
 
-        let layout = UICollectionViewFlowLayout()
-        layout.scrollDirection = .horizontal
-        layout.itemSize = CGSize(width: 66, height: 96)
-        layout.minimumLineSpacing = 8
-        layout.sectionInset = UIEdgeInsets(top: 4, left: 14, bottom: 0, right: 14)
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        // Сетка в несколько столбцов с ВЕРТИКАЛЬНЫМ скроллом (ширина ячейки считается в layoutSubviews)
+        gridLayout.scrollDirection = .vertical
+        gridLayout.itemSize = CGSize(width: 84, height: gridItemHeight)
+        gridLayout.minimumInteritemSpacing = gridGap
+        gridLayout.minimumLineSpacing = 8
+        gridLayout.sectionInset = UIEdgeInsets(top: 12, left: gridInset, bottom: 24, right: gridInset)
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: gridLayout)
         collectionView.backgroundColor = .clear
         collectionView.showsHorizontalScrollIndicator = false
+        collectionView.showsVerticalScrollIndicator = true
+        collectionView.alwaysBounceVertical = true
+        collectionView.alwaysBounceHorizontal = false
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.register(PanelItemCell.self, forCellWithReuseIdentifier: PanelItemCell.reuseId)
@@ -209,7 +230,7 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         header.addSubview(titleLabel)
         header.addSubview(closeButton)
         extraButton.setTitleColor(Theme.accent, for: .normal)
-        extraButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        extraButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
         extraButton.addTarget(self, action: #selector(extraTapped), for: .touchUpInside)
         extraButton.isHidden = true
         header.addSubview(extraButton)
@@ -225,7 +246,7 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         closeButton.snp.makeConstraints { make in
             make.trailing.equalToSuperview().inset(8)
             make.centerY.equalToSuperview()
-            make.size.equalTo(40)
+            make.size.equalTo(48)
         }
 
         sliderRow.addSubview(sliderCaption)
@@ -234,12 +255,12 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         sliderCaption.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(16)
             make.centerY.equalToSuperview()
-            make.width.equalTo(60)
+            make.width.equalTo(84)
         }
         sliderValue.snp.makeConstraints { make in
             make.trailing.equalToSuperview().inset(16)
             make.centerY.equalToSuperview()
-            make.width.equalTo(52)
+            make.width.equalTo(60)
         }
         slider.snp.makeConstraints { make in
             make.leading.equalTo(sliderCaption.snp.trailing).offset(4)
@@ -251,13 +272,27 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         stack.axis = .vertical
         addSubview(stack)
         stack.snp.makeConstraints { $0.edges.equalToSuperview() }
-        header.snp.makeConstraints { $0.height.equalTo(38) }
-        sliderRow.snp.makeConstraints { $0.height.equalTo(34) }
-        chipsView.snp.makeConstraints { $0.height.equalTo(36) }
+        header.snp.makeConstraints { $0.height.equalTo(48) }
+        sliderRow.snp.makeConstraints { $0.height.equalTo(44) }
+        chipsView.snp.makeConstraints { $0.height.equalTo(46) }
         chipsView.isHidden = true
         chipsView.onSelect = { [weak self] i in self?.onChip?(i) }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Столбцы по ширине панели: минимум 4, ячейки растягиваются на всю ширину ряда.
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = bounds.width
+        guard width > 0 else { return }
+        let usable = width - gridInset * 2
+        let cols = max(4, floor((usable + gridGap) / (gridMinItemWidth + gridGap)))
+        let w = floor((usable - gridGap * (cols - 1)) / cols)
+        if abs(gridLayout.itemSize.width - w) > 0.5 || gridLayout.itemSize.height != gridItemHeight {
+            gridLayout.itemSize = CGSize(width: w, height: gridItemHeight)
+            gridLayout.invalidateLayout()
+        }
+    }
 
     func configure(title: String, items: [PanelItem], selected: Int?, slider cfg: SliderConfig?,
                    chips: [String]? = nil, selectedChip: Int = 0, extra: String? = nil, keepScroll: Bool = true) {
@@ -297,7 +332,8 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
             if let s = selected, s < items.count, s >= 0 {
                 let maxPossibleIndex = max(0, items.count - 1)
                 let targetIndex = min(s, maxPossibleIndex)
-                collectionView.scrollToItem(at: IndexPath(item: targetIndex, section: 0), at: .centeredHorizontally, animated: false)
+                collectionView.layoutIfNeeded()
+                collectionView.scrollToItem(at: IndexPath(item: targetIndex, section: 0), at: .centeredVertically, animated: false)
             } else {
                 collectionView.setContentOffset(.zero, animated: false)
             }

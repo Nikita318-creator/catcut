@@ -64,15 +64,21 @@ final class ToolCell: UICollectionViewCell {
         iconView.tintColor = .white
         iconView.contentMode = .scaleAspectFit
         titleLabel.textColor = .lightGray
-        titleLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
         titleLabel.textAlignment = .center
+        titleLabel.adjustsFontSizeToFitWidth = true
+        titleLabel.minimumScaleFactor = 0.8
         let stack = UIStackView(arrangedSubviews: [iconView, titleLabel])
         stack.axis = .vertical
-        stack.spacing = 5
+        stack.spacing = 7
         stack.alignment = .center
         contentView.addSubview(stack)
-        stack.snp.makeConstraints { $0.center.equalToSuperview() }
-        iconView.snp.makeConstraints { $0.size.equalTo(24) }
+        stack.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.leading.greaterThanOrEqualToSuperview().offset(2)
+            make.trailing.lessThanOrEqualToSuperview().offset(-2)
+        }
+        iconView.snp.makeConstraints { $0.size.equalTo(34) }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 

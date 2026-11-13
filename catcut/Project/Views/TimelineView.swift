@@ -32,7 +32,7 @@ final class RulerView: UIView {
         guard last >= first else { return }
 
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium),
+            .font: UIFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
             .foregroundColor: UIColor(white: 0.55, alpha: 1)
         ]
         ctx.setStrokeColor(UIColor(white: 0.4, alpha: 1).cgColor)
@@ -82,7 +82,7 @@ final class ClipTileView: UIView {
         info += " "
         let label = UILabel()
         label.text = info
-        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
         label.textColor = .white
         label.backgroundColor = UIColor.black.withAlphaComponent(0.5)
         label.layer.cornerRadius = 3
@@ -130,7 +130,7 @@ final class OverlayTileView: UIView {
         info += " "
         let label = UILabel()
         label.text = info
-        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
         label.textColor = .white
         label.backgroundColor = UIColor.black.withAlphaComponent(0.5)
         label.layer.cornerRadius = 3
@@ -208,7 +208,7 @@ final class AudioBarView: UIView {
             }
         }
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: 10, weight: .semibold),
+            .font: UIFont.systemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: UIColor.white
         ]
         ("♪ " + title as NSString).draw(at: CGPoint(x: 16, y: 2), withAttributes: attrs)
@@ -598,7 +598,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         func hint(_ text: String, y: CGFloat) {
             let l = UILabel(frame: CGRect(x: side + 10, y: y, width: 240, height: laneHeight))
             l.text = text
-            l.font = .systemFont(ofSize: 11, weight: .medium)
+            l.font = .systemFont(ofSize: 13, weight: .medium)
             l.textColor = UIColor(white: 1, alpha: 0.35)
             contentView.addSubview(l)
         }
@@ -606,15 +606,15 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         if audios.isEmpty { hint("Аудио — нажмите «Аудио» внизу", y: audioBase) }
 
         let chipY: [TimelineLane: CGFloat] = [
-            .video: mainTop + (clipHeight - 24) / 2,
-            .overlay: overlayTop + (overlayStep - 24) / 2,
-            .text: textBase + 1,
-            .audio: audioBase + 1
+            .video: mainTop + (clipHeight - 28) / 2,
+            .overlay: overlayTop + (overlayStep - 28) / 2,
+            .text: textBase - 1,
+            .audio: audioBase - 1
         ]
         for (lane, b) in chips {
             let on = focus == lane
             b.isHidden = (lane == .overlay && !hasOverlays)
-            b.frame = CGRect(x: 6, y: chipY[lane] ?? 0, width: 28, height: 24)
+            b.frame = CGRect(x: 6, y: chipY[lane] ?? 0, width: 34, height: 28)
             b.backgroundColor = on ? Theme.accent : UIColor(white: 0.22, alpha: 0.95)
             b.tintColor = on ? .black : .white
         }
@@ -653,13 +653,13 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         if clips.count > 1 {
             for j in 0..<(clips.count - 1) {
                 let cx = side + CGFloat(layout.starts[j + 1].secs) * pps
-                let f = CGRect(x: cx - 13, y: mainTop + clipHeight / 2 - 13, width: 26, height: 26)
+                let f = CGRect(x: cx - 16, y: mainTop + clipHeight / 2 - 16, width: 32, height: 32)
                 transitionFrames.append(f)
                 let spec = TransitionCatalog.spec(clips[j].transitionID)
                 let has = spec != nil
                 let v = UIView(frame: f)
                 v.backgroundColor = has ? Theme.accent : UIColor(white: 0.95, alpha: 0.95)
-                v.layer.cornerRadius = 13
+                v.layer.cornerRadius = 16
                 v.layer.shadowColor = UIColor.black.cgColor
                 v.layer.shadowOpacity = 0.4
                 v.layer.shadowRadius = 3
@@ -667,7 +667,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
                 let icon = UIImageView(image: UIImage(systemName: spec?.category.symbol ?? "rectangle.on.rectangle"))
                 icon.tintColor = .black
                 icon.contentMode = .scaleAspectFit
-                icon.frame = CGRect(x: 5, y: 5, width: 16, height: 16)
+                icon.frame = CGRect(x: 7, y: 7, width: 18, height: 18)
                 v.addSubview(icon)
                 contentView.addSubview(v)
                 transitionViews.append(v)
@@ -683,7 +683,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             bar.insets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 8)
             bar.frame = CGRect(x: x, y: y, width: w, height: laneHeight)
             bar.text = "T  " + o.text.replacingOccurrences(of: "\n", with: " ")
-            bar.font = .systemFont(ofSize: 11, weight: .semibold)
+            bar.font = .systemFont(ofSize: 13, weight: .semibold)
             bar.textColor = .white
             bar.backgroundColor = Theme.textBar
             bar.layer.cornerRadius = 6

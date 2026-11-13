@@ -111,7 +111,7 @@ final class ViewController: UIViewController {
     let exporter = VideoExporter()
 
     let speeds: [Float] = [0.25, 0.5, 1, 1.5, 2, 3, 4]
-    let toolBarHeight: CGFloat = 76
+    let toolBarHeight: CGFloat = 100
 
     var totalSeconds: Double { build?.layout.total.secs ?? 0 }
     var selectedText: TextOverlay? { texts.first { $0.id == selectedTextID } }
@@ -201,20 +201,21 @@ final class ViewController: UIViewController {
         topBar.snp.makeConstraints { make in
             make.top.equalTo(view.safeAreaLayoutGuide)
             make.leading.trailing.equalToSuperview()
-            make.height.equalTo(52) // Чуем увеличение высоты для иконки с текстом
+            make.height.equalTo(60)
         }
 
         // 1. Создаем эффект стекла (Liquid Glass / Material)
         let blurEffect = UIBlurEffect(style: .systemUltraThinMaterialDark)
         let glassBackground = UIVisualEffectView(effect: blurEffect)
         glassBackground.isUserInteractionEnabled = false // чтобы тапы проходили сквозь саму подложку на кнопку
-        glassBackground.layer.cornerRadius = 20
+        glassBackground.layer.cornerRadius = 23
         glassBackground.clipsToBounds = true
         
         // 2. Сама кнопка меню со стрелочкой
         let menuButton = UIButton(type: .system)
         var menuConfig = UIButton.Configuration.plain()
-        menuConfig.image = UIImage(systemName: "chevron.down")
+        menuConfig.image = UIImage(systemName: "chevron.down",
+                                   withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold))
         menuConfig.imagePadding = 0
         menuButton.configuration = menuConfig
         menuButton.tintColor = .white
@@ -241,17 +242,17 @@ final class ViewController: UIViewController {
         menuButton.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(16)
             make.centerY.equalToSuperview()
-            make.size.equalTo(40)
+            make.size.equalTo(46)
         }
 
         // Кнопка Экспорт (сохраняет позицию справа)
         let exportButton = UIButton(type: .system)
         exportButton.setTitle("Экспорт", for: .normal)
-        exportButton.titleLabel?.font = .boldSystemFont(ofSize: 14)
+        exportButton.titleLabel?.font = .boldSystemFont(ofSize: 17)
         exportButton.setTitleColor(.black, for: .normal)
         exportButton.backgroundColor = .white
-        exportButton.layer.cornerRadius = 16
-        exportButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 16, bottom: 7, right: 16)
+        exportButton.layer.cornerRadius = 20
+        exportButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 20, bottom: 10, right: 20)
         exportButton.addTarget(self, action: #selector(didTapExport), for: .touchUpInside)
         topBar.addSubview(exportButton)
         exportButton.snp.makeConstraints { make in
@@ -260,35 +261,47 @@ final class ViewController: UIViewController {
         }
 
         // Кнопка Отмена (Undo)
-        undoButton.setImage(UIImage(systemName: "arrow.uturn.backward"), for: .normal)
+        let iconCfg = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
+        undoButton.setImage(UIImage(systemName: "arrow.uturn.backward", withConfiguration: iconCfg), for: .normal)
         undoButton.tintColor = .white
         undoButton.addTarget(self, action: #selector(didTapUndo), for: .touchUpInside)
         topBar.addSubview(undoButton)
         undoButton.snp.makeConstraints { make in
-            make.trailing.equalTo(exportButton.snp.leading).offset(-12)
+            make.trailing.equalTo(exportButton.snp.leading).offset(-10)
             make.centerY.equalToSuperview()
-            make.size.equalTo(44)
+            make.size.equalTo(50)
         }
 
         // Кнопка Повтор (Redo) — стрелка вперед
-        redoButton.setImage(UIImage(systemName: "arrow.uturn.forward"), for: .normal)
+        redoButton.setImage(UIImage(systemName: "arrow.uturn.forward", withConfiguration: iconCfg), for: .normal)
         redoButton.tintColor = .white
         redoButton.addTarget(self, action: #selector(didTapRedo), for: .touchUpInside)
         topBar.addSubview(redoButton)
         redoButton.snp.makeConstraints { make in
-            make.trailing.equalTo(undoButton.snp.leading).offset(-4)
+            make.trailing.equalTo(undoButton.snp.leading).offset(-2)
             make.centerY.equalToSuperview()
-            make.size.equalTo(44)
+            make.size.equalTo(50)
         }
 
-        // Player
+        // Player: компактное превью. Слот — всё свободное место между шапкой и controlBar,
+        // сам плеер центрируется в нём и не выше ~28% экрана (остальное отдано кнопкам и панелям).
+        // Полноценный просмотр — кнопка «на весь экран» в controlBar.
+        let playerSlot = UILayoutGuide()
+        view.addLayoutGuide(playerSlot)
+        playerSlot.snp.makeConstraints { make in
+            make.top.equalTo(topBar.snp.bottom).offset(4)
+            make.leading.trailing.equalToSuperview()
+            make.bottom.equalTo(controlBar.snp.top).offset(-2)
+        }
         playerContainer.backgroundColor = .black
         playerContainer.layer.cornerRadius = 10
         playerContainer.clipsToBounds = true
         playerContainer.snp.makeConstraints { make in
-            make.top.equalTo(topBar.snp.bottom).offset(4)
+            make.centerY.equalTo(playerSlot)
             make.leading.trailing.equalToSuperview().inset(16)
-            make.bottom.equalTo(controlBar.snp.top).offset(-2)
+            make.height.equalTo(playerSlot).priority(.high)
+            make.height.lessThanOrEqualTo(playerSlot)
+            make.height.lessThanOrEqualTo(view.snp.height).multipliedBy(0.28)
         }
 
         emptyLabel.text = "Нажмите «+» на таймлайне\nили «Добавить», чтобы выбрать видео"
@@ -331,24 +344,37 @@ final class ViewController: UIViewController {
         // Control bar
         controlBar.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
-            make.height.equalTo(40)
+            make.height.equalTo(52)
             make.bottom.equalTo(timelineView.snp.top)
         }
         timeLabel.textColor = .lightGray
-        timeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
         timeLabel.text = "00:00.0 / 00:00.0"
         controlBar.addSubview(timeLabel)
         timeLabel.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(16)
             make.centerY.equalToSuperview()
         }
-        playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
+        playButton.setImage(UIImage(systemName: "play.fill", withConfiguration: ViewController.playIconConfig), for: .normal)
         playButton.tintColor = .white
         playButton.addTarget(self, action: #selector(togglePlay), for: .touchUpInside)
         controlBar.addSubview(playButton)
         playButton.snp.makeConstraints { make in
             make.center.equalToSuperview()
-            make.size.equalTo(40)
+            make.size.equalTo(52)
+        }
+
+        // Кнопка «Превью на весь экран»
+        let fullscreenButton = UIButton(type: .system)
+        fullscreenButton.setImage(UIImage(systemName: "arrow.up.left.and.arrow.down.right",
+                                          withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)), for: .normal)
+        fullscreenButton.tintColor = .white
+        fullscreenButton.addTarget(self, action: #selector(didTapFullscreen), for: .touchUpInside)
+        controlBar.addSubview(fullscreenButton)
+        fullscreenButton.snp.makeConstraints { make in
+            make.trailing.equalToSuperview().inset(10)
+            make.centerY.equalToSuperview()
+            make.size.equalTo(48)
         }
 
         // Timeline
@@ -370,7 +396,7 @@ final class ViewController: UIViewController {
 
         let layout = UICollectionViewFlowLayout()
         layout.scrollDirection = .horizontal
-        layout.itemSize = CGSize(width: 68, height: 62)
+        layout.itemSize = CGSize(width: 86, height: 86)
         layout.minimumLineSpacing = 4
         layout.sectionInset = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
         toolCollection = UICollectionView(frame: .zero, collectionViewLayout: layout)
@@ -630,9 +656,21 @@ final class ViewController: UIViewController {
                                 Int(total) / 60, total.truncatingRemainder(dividingBy: 60))
     }
 
+    static let playIconConfig = UIImage.SymbolConfiguration(pointSize: 28, weight: .medium)
+
     func updatePlayButton() {
         let name = player.rate > 0 ? "pause.fill" : "play.fill"
-        playButton.setImage(UIImage(systemName: name), for: .normal)
+        playButton.setImage(UIImage(systemName: name, withConfiguration: ViewController.playIconConfig), for: .normal)
+    }
+
+    /// Превью на весь экран. Тот же AVPlayer — все фильтры, текст и оверлеи видны как есть.
+    /// .overFullScreen: ViewController остаётся «на экране», viewWillDisappear не срабатывает.
+    @objc func didTapFullscreen() {
+        guard build != nil else { showToast("Сначала добавьте видео"); return }
+        let vc = FullscreenPreviewViewController(player: player)
+        vc.modalPresentationStyle = .overFullScreen
+        vc.modalTransitionStyle = .crossDissolve
+        present(vc, animated: true)
     }
 
     func pausePlayback() {
