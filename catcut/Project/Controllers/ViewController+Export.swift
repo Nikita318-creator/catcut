@@ -37,7 +37,7 @@ extension ViewController {
                 if let e = error as? VideoExporter.ExportError, e == .cancelled {
                     self.showToast("Экспорт отменён")
                 } else {
-                    self.showResultAlert(title: "Ошибка", message: error.localizedDescription)
+                    self.showToast(error.localizedDescription)
                 }
             }
         })
@@ -47,7 +47,7 @@ extension ViewController {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard status == .authorized || status == .limited else {
                 DispatchQueue.main.async {
-                    self?.showResultAlert(title: "Нет доступа", message: "Разрешите добавление в Фото в настройках.")
+                    self?.showToast("Нет доступа к галерее")
                 }
                 return
             }
@@ -56,18 +56,12 @@ extension ViewController {
             }) { success, error in
                 DispatchQueue.main.async {
                     if success {
-                        self?.showResultAlert(title: "Готово 🎉", message: "Видео сохранено в Галерею.")
+                        self?.showToast("Видео сохранено в галерею")
                     } else {
-                        self?.showResultAlert(title: "Ошибка", message: error?.localizedDescription ?? "Не удалось сохранить")
+                        self?.showToast(error?.localizedDescription ?? "Не удалось сохранить")
                     }
                 }
             }
         }
-    }
-
-    func showResultAlert(title: String, message: String) {
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
-        present(alert, animated: true)
     }
 }
