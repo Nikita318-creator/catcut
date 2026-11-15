@@ -212,7 +212,7 @@ struct TimelineLayout {
 
         for i in 0..<clips.count {
             if i < clips.count - 1, clips[i].transitionID != 0 {
-                let maxAllowed = 0.5 * min(durations[i].secs, durations[i + 1].secs)
+                let maxAllowed = min(3.0, durations[i].secs, durations[i + 1].secs)
                 let d = min(clips[i].transitionDuration, maxAllowed)
                 overlapAfter.append(d >= 0.1 ? floorTicks(d) : .zero)
             } else {

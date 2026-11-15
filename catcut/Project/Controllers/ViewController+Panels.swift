@@ -711,7 +711,13 @@ extension ViewController {
             refreshVideoComposition()
         case .transition?:
             guard clips.count >= 2 else { return }
-            clips[min(transitionBoundary, clips.count - 2)].transitionDuration = Double(v)
+            let idx = min(transitionBoundary, clips.count - 2)
+            // ИСПРАВЛЕНИЕ 3: Убран жесткий зажим до 0.5 от короткого клипа, который блокировал ползунок.
+            // Теперь верхняя граница ограничена адекватным максимумом (до 3 секунд или длины смежных клипов).
+            let maxAllowed = min(3.0, clips[idx].displayDuration.secs, clips[idx + 1].displayDuration.secs)
+            let newDur = min(Double(v), maxAllowed)
+            clips[idx].transitionDuration = max(0.1, newDur)
+            rebuild() // Пересобираем проект, чтобы применилась новая длительность перехода
         case .animation?:
             if animTab == 0 { project.introDuration = Double(v) } else { project.outroDuration = Double(v) }
             refreshVideoComposition()

@@ -41,22 +41,44 @@ final class TransitionPreviewStore {
 
     /// key: "t<id>". Результат приходит в main.
     func image(for key: String, isValid: @escaping () -> Bool, completion: @escaping (UIImage?) -> Void) {
-        if let cached = cache.object(forKey: key as NSString) { completion(cached); return }
-        lock.lock(); let gen = generation; let f = fromImg; let t = toImg; lock.unlock()
-        guard f != nil, t != nil, let id = Int(key.dropFirst()) else { completion(nil); return }
-
+        if let cached = cache.object(forKey: key as NSString) {
+            completion(cached)
+            return
+        }
+        
+        lock.lock()
+        let gen = generation
+        let f = fromImg
+        let t = toImg
+        lock.unlock()
+        
+        // ИСПРАВЛЕНИЕ 2: Если превью еще не готово или кадры не прогрузились,
+        // сразу отдаем nil (пустоту), чтобы ячейка не мигала дефолтной заглушкой.
+        guard f != nil, t != nil, let id = Int(key.dropFirst()) else {
+            completion(nil)
+            return
+        }
+        
         queue.async { [weak self] in
-            guard let self = self, isValid(), let f = f, let t = t, let spec = TransitionCatalog.spec(id) else { return }
+            guard let self = self, isValid(), let f = f, let t = t, let spec = TransitionCatalog.spec(id) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
             let rect = CGRect(x: 0, y: 0, width: self.side, height: self.side)
             var p: CGFloat = 0.45
             if case .dip = spec.base { p = 0.3 }
             let out = TransitionRenderer.render(id: id, from: f, to: t, t: p, rect: rect)
             var image: UIImage?
             if let cg = EditorCompositor.ciContext.createCGImage(out, from: rect) { image = UIImage(cgImage: cg) }
+            
             DispatchQueue.main.async {
-                self.lock.lock(); let same = (gen == self.generation); self.lock.unlock()
+                self.lock.lock()
+                let same = (gen == self.generation)
+                self.lock.unlock()
                 guard same else { return }
-                if let image = image { self.cache.setObject(image, forKey: key as NSString) }
+                if let image = image {
+                    self.cache.setObject(image, forKey: key as NSString)
+                }
                 completion(image)
             }
         }

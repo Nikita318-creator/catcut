@@ -78,15 +78,14 @@ final class EditorBuild {
 
     static func make(clips: [VideoClip], audios: [AudioClip], overlays: [VideoOverlay], project: ProjectSettings) -> EditorBuild? {
         guard !clips.isEmpty else { return nil }
-
+        
         let comp = AVMutableComposition()
         guard let vA = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
               let vB = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
               let aA = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid),
               let aB = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         else { return nil }
-
-        // Создаем динамические треки под каждый оверлей и сохраняем их маппинг
+        
         var overlayLayerInfos: [OverlayLayerInfo] = []
         for o in overlays {
             guard o.duration > 0.05,
@@ -97,7 +96,6 @@ final class EditorBuild {
             let startT = ticks(o.start)
             let want = floorTicks(o.duration)
             if o.isImage {
-                // картинка = короткое «видео» из одного кадра: берём сколько есть и растягиваем до нужной длины
                 let avail = min(floorTicks(media.duration), want)
                 guard avail > .zero else { continue }
                 try? oTrack.insertTimeRange(CMTimeRange(start: .zero, duration: avail), of: src, at: startT)
@@ -113,18 +111,18 @@ final class EditorBuild {
             let orient = imageOrientation(for: src.preferredTransform)
             overlayLayerInfos.append(OverlayLayerInfo(trackID: oTrack.trackID, orientation: orient, overlay: o))
         }
-
+        
         let layout = TimelineLayout(clips: clips)
         let videoTracks = [vA, vB]
         let audioTracks = [aA, aB]
         let audioParams = [AVMutableAudioMixInputParameters(track: aA), AVMutableAudioMixInputParameters(track: aB)]
         var orientations: [CGImagePropertyOrientation] = []
-
+        
         for (i, clip) in clips.enumerated() {
             let slot = i % 2
             let start = layout.starts[i]
             let dur = layout.durations[i]
-
+            
             if let src = clip.asset.tracks(withMediaType: .video).first {
                 try? videoTracks[slot].insertTimeRange(clip.sourceRange, of: src, at: start)
                 if clip.speed != 1 {
@@ -134,7 +132,7 @@ final class EditorBuild {
             } else {
                 orientations.append(.up)
             }
-
+            
             let audioAsset = clip.processedAudio ?? clip.asset
             if clip.volume > 0.001, let srcA = audioAsset.tracks(withMediaType: .audio).first {
                 try? audioTracks[slot].insertTimeRange(clip.sourceRange, of: srcA, at: start)
@@ -142,23 +140,30 @@ final class EditorBuild {
                     audioTracks[slot].scaleTimeRange(CMTimeRange(start: start, duration: clip.sourceRange.duration), toDuration: dur)
                 }
                 let p = audioParams[slot]
+                
+                // ИСПРАВЛЕНИЕ 1: Убраны кроссфейды через ramp громкости.
+                // Звук каждого клипа идет с фиксированной громкостью до конца его длительности на таймлайне,
+                // без одновременного наложения звука соседнего клипа на переходах.
+                p.setVolume(clip.volume, at: start)
+                
                 let half = dur.secs / 2
-                let inD = floorTicks(min(clip.fadeIn, half))
-                let outD = floorTicks(min(clip.fadeOut, half))
-                if inD > .zero {
-                    p.setVolumeRamp(fromStartVolume: 0, toEndVolume: clip.volume, timeRange: CMTimeRange(start: start, duration: inD))
-                } else {
-                    p.setVolume(clip.volume, at: start)
+                if clip.fadeIn > 0 {
+                    let inD = floorTicks(min(clip.fadeIn, half))
+                    if inD > .zero {
+                        p.setVolumeRamp(fromStartVolume: 0, toEndVolume: clip.volume, timeRange: CMTimeRange(start: start, duration: inD))
+                    }
                 }
-                if outD > .zero {
-                    p.setVolumeRamp(fromStartVolume: clip.volume, toEndVolume: 0,
-                                    timeRange: CMTimeRange(start: start + dur - outD, duration: outD))
+                if clip.fadeOut > 0 {
+                    let outD = floorTicks(min(clip.fadeOut, half))
+                    if outD > .zero {
+                        p.setVolumeRamp(fromStartVolume: clip.volume, toEndVolume: 0, timeRange: CMTimeRange(start: start + dur - outD, duration: outD))
+                    }
                 }
             }
         }
-
+        
         var params: [AVMutableAudioMixInputParameters] = audioParams
-
+        
         for a in audios {
             let asset = a.processed ?? a.asset
             guard let src = asset.tracks(withMediaType: .audio).first,
@@ -182,10 +187,10 @@ final class EditorBuild {
             }
             params.append(mp)
         }
-
+        
         let mix = AVMutableAudioMix()
         mix.inputParameters = params
-
+        
         return EditorBuild(composition: comp, audioMix: mix, layout: layout,
                            renderSize: frameSize(for: project, firstClip: clips[0]),
                            trackIDs: [vA.trackID, vB.trackID], orientations: orientations, overlayLayerInfos: overlayLayerInfos)
