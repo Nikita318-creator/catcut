@@ -190,11 +190,11 @@ final class EditorBuild {
                            renderSize: frameSize(for: project, firstClip: clips[0]),
                            trackIDs: [vA.trackID, vB.trackID], orientations: orientations, overlayLayerInfos: overlayLayerInfos)
     }
-
-    func makeVideoComposition(clips: [VideoClip], texts: [TextOverlay], overlays: [VideoOverlay], project: ProjectSettings) -> AVMutableVideoComposition {
+    
+    func makeVideoComposition(clips: [VideoClip], texts: [TextOverlay], overlays: [VideoOverlay], filterOverlays: [FilterOverlay], project: ProjectSettings) -> AVMutableVideoComposition {
         enum Seg { case solo(Int), trans(Int) }
         var segs: [(CMTime, CMTime, Seg)] = []
-
+        
         for i in 0..<layout.starts.count {
             let soloStart = layout.starts[i] + layout.overlapIn(i)
             let soloEnd = layout.starts[i] + layout.durations[i] - layout.overlapOut(i)
@@ -204,48 +204,60 @@ final class EditorBuild {
                 segs.append((ts, ts + layout.overlapAfter[i], .trans(i)))
             }
         }
-
-        func layer(_ i: Int) -> LayerInfo {
+        
+        func layer(_ i: Int, activeFilter: FilterLayerInfo?) -> LayerInfo {
             let safeIdx = min(max(0, i), clips.count - 1)
             let c = clips[safeIdx]
             var bgImg: CIImage? = nil
             var bgCol: CIColor? = nil
             if c.bgMode == 1, let f = c.bgFile { bgImg = bgImage(for: f) }
             if c.bgMode == 3 { bgCol = CIColor(color: TextPalette.color(c.bgColor)) }
+            
+            // Если на таймлайне поверх видео наложен отдельный FilterOverlay, приоритетно используем его параметры
+            let filterID = activeFilter?.filterID ?? c.filterID
+            let intensity = activeFilter?.intensity ?? c.filterIntensity
+            let adjust = activeFilter?.adjust ?? c.adjust
+            
             return LayerInfo(trackID: trackIDs[i % 2], orientation: orientations[safeIdx],
-                             preset: FilterCatalog.preset(c.filterID)?.adjust, intensity: c.filterIntensity,
-                             custom: c.adjust, look: VideoLook(rawValue: c.look) ?? .none,
+                             preset: FilterCatalog.preset(filterID)?.adjust, intensity: intensity,
+                             custom: adjust, look: VideoLook(rawValue: c.look) ?? .none,
                              flipH: c.flipH, flipV: c.flipV, rotation: c.rotation, zoom: c.zoom,
                              bgMode: c.bgMode, bgImage: bgImg, bgColor: bgCol,
                              bgDepthThreshold: c.bgDepthThreshold)
         }
-
+        
         let info = ProjectInfo(fillMode: project.fillMode, blurBackground: project.blurBackground,
                                introID: project.introID, introDuration: project.introDuration,
                                outroID: project.outroID, outroDuration: project.outroDuration,
                                total: layout.total.secs, crop: project.crop)
-        // Живые параметры оверлеев (позиция/размер/поворот/прозрачность) берём из актуального массива,
-        // а не из снимка на момент сборки треков — так жесты работают без полной пересборки.
+        
         let liveOverlays: [OverlayLayerInfo] = overlayLayerInfos.compactMap { i in
             guard let o = overlays.first(where: { $0.id == i.overlay.id }) else { return nil }
             return OverlayLayerInfo(trackID: i.trackID, orientation: i.orientation, overlay: o)
         }
+        
         let endTime = max(layout.total, composition.duration)
         var instructions: [AVVideoCompositionInstructionProtocol] = []
-
+        
         for (idx, seg) in segs.enumerated() {
             var e = seg.1
             if idx == segs.count - 1 { e = max(e, endTime) }
             let range = CMTimeRange(start: seg.0, end: e)
+            
+            // Определяем, какой фильтр-оверлей активен в данный момент времени (середину отрезка проверяем)
+            let midTime = range.start.secs + range.duration.secs / 2
+            let activeFO = filterOverlays.first { midTime >= $0.start && midTime <= $0.start + $0.duration }
+            let filterInfo = activeFO.map { FilterLayerInfo(filterID: $0.filterID, intensity: $0.filterIntensity, adjust: $0.adjust) }
+            
             switch seg.2 {
             case .solo(let i):
-                instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: nil, transitionID: 0, texts: texts, overlays: liveOverlays, project: info))
+                instructions.append(EditorInstruction(timeRange: range, from: layer(i, activeFilter: filterInfo), to: nil, transitionID: 0, texts: texts, overlays: liveOverlays, activeFilter: filterInfo, project: info))
             case .trans(let i):
-                instructions.append(EditorInstruction(timeRange: range, from: layer(i), to: layer(i + 1),
-                                                      transitionID: clips[i].transitionID, texts: texts, overlays: liveOverlays, project: info))
+                instructions.append(EditorInstruction(timeRange: range, from: layer(i, activeFilter: filterInfo), to: layer(i + 1, activeFilter: filterInfo),
+                                                      transitionID: clips[i].transitionID, texts: texts, overlays: liveOverlays, activeFilter: filterInfo, project: info))
             }
         }
-
+        
         let vc = AVMutableVideoComposition()
         vc.customVideoCompositorClass = EditorCompositor.self
         vc.frameDuration = CMTime(value: 1, timescale: 30)

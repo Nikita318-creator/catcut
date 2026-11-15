@@ -39,10 +39,11 @@ final class VideoExporter {
                 texts: [TextOverlay],
                 project: ProjectSettings,
                 overlays: [VideoOverlay],
+                filterOverlays: [FilterOverlay],
                 progress: @escaping (Float) -> Void,
                 completion: @escaping (Result<URL, Error>) -> Void) {
 
-        let videoComposition = build.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, project: project)
+        let videoComposition = build.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, filterOverlays: filterOverlays, project: project)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("edit_\(UUID().uuidString).mp4")
         try? FileManager.default.removeItem(at: url)
 

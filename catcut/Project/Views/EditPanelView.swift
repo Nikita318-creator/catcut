@@ -48,7 +48,7 @@ final class PanelItemCell: UICollectionViewCell {
         super.init(frame: frame)
 
         box.backgroundColor = Theme.surface
-        box.layer.cornerRadius = 10
+        box.layer.cornerRadius = 8
         box.clipsToBounds = true
         box.layer.borderColor = Theme.accent.cgColor
         contentView.addSubview(box)
@@ -62,18 +62,18 @@ final class PanelItemCell: UICollectionViewCell {
         box.addSubview(iconView)
 
         badgeLabel.textColor = .white
-        badgeLabel.font = .systemFont(ofSize: 18, weight: .bold)
+        badgeLabel.font = .systemFont(ofSize: 14, weight: .bold)
         badgeLabel.adjustsFontSizeToFitWidth = true
         badgeLabel.minimumScaleFactor = 0.7
         badgeLabel.textAlignment = .center
         box.addSubview(badgeLabel)
 
-        swatchView.layer.cornerRadius = 18
+        swatchView.layer.cornerRadius = 13
         swatchView.layer.borderWidth = 1
         swatchView.layer.borderColor = UIColor(white: 1, alpha: 0.4).cgColor
         box.addSubview(swatchView)
 
-        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.font = .systemFont(ofSize: 11, weight: .medium)
         titleLabel.textColor = .lightGray
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 2
@@ -83,21 +83,21 @@ final class PanelItemCell: UICollectionViewCell {
 
         box.snp.makeConstraints { make in
             make.top.centerX.equalToSuperview()
-            make.size.equalTo(68)
+            make.size.equalTo(52)
         }
         heartButton.addTarget(self, action: #selector(heartTapped), for: .touchUpInside)
         contentView.addSubview(heartButton)
         heartButton.snp.makeConstraints { make in
-            make.top.equalTo(box).offset(-8)
-            make.trailing.equalTo(box).offset(8)
-            make.size.equalTo(32)
+            make.top.equalTo(box).offset(-6)
+            make.trailing.equalTo(box).offset(6)
+            make.size.equalTo(26)
         }
         imageView.snp.makeConstraints { $0.edges.equalToSuperview() }
-        iconView.snp.makeConstraints { make in make.center.equalToSuperview(); make.size.equalTo(32) }
-        badgeLabel.snp.makeConstraints { $0.edges.equalToSuperview().inset(4) }
-        swatchView.snp.makeConstraints { make in make.center.equalToSuperview(); make.size.equalTo(36) }
+        iconView.snp.makeConstraints { make in make.center.equalToSuperview(); make.size.equalTo(22) }
+        badgeLabel.snp.makeConstraints { $0.edges.equalToSuperview().inset(3) }
+        swatchView.snp.makeConstraints { make in make.center.equalToSuperview(); make.size.equalTo(26) }
         titleLabel.snp.makeConstraints { make in
-            make.top.equalTo(box.snp.bottom).offset(6)
+            make.top.equalTo(box.snp.bottom).offset(4)
             make.leading.trailing.equalToSuperview()
         }
     }
@@ -131,7 +131,7 @@ final class PanelItemCell: UICollectionViewCell {
         heartButton.setImage(UIImage(systemName: fav ? "heart.fill" : "heart"), for: .normal)
         heartButton.tintColor = fav ? .systemPink : UIColor(white: 1, alpha: 0.85)
         let hi = selected || item.on == true
-        box.layer.borderWidth = hi ? 2.5 : 0
+        box.layer.borderWidth = hi ? 2 : 0
         titleLabel.textColor = hi ? Theme.accent : .lightGray
 
         if item.image == nil, let key = item.previewKey, let provider = provider {
@@ -155,10 +155,10 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
     private let sliderValue = UILabel()
     private var collectionView: UICollectionView!
     private let gridLayout = UICollectionViewFlowLayout()
-    private let gridInset: CGFloat = 14
-    private let gridGap: CGFloat = 8
-    private let gridMinItemWidth: CGFloat = 80
-    private let gridItemHeight: CGFloat = 112
+    private let gridInset: CGFloat = 12
+    private let gridGap: CGFloat = 6
+    private let gridMinItemWidth: CGFloat = 60
+    private let gridItemHeight: CGFloat = 84
 
     private var items: [PanelItem] = []
     private var selectedIndex: Int?
@@ -178,10 +178,6 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
     var onSliderChanged: ((Float) -> Void)?
     var onSliderEnded: ((Float) -> Void)?
 
-    /// Панель — как bottom sheet: фиксированная треть экрана (не меньше 320),
-    /// слайдер и чипсы забирают место у сетки, а не раздувают панель.
-    var preferredHeight: CGFloat { max(320, (UIScreen.main.bounds.height / 3).rounded()) }
-
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = Theme.panel
@@ -190,20 +186,20 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         clipsToBounds = true
 
         titleLabel.textColor = .white
-        titleLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         titleLabel.adjustsFontSizeToFitWidth = true
         titleLabel.minimumScaleFactor = 0.8
         closeButton.setImage(UIImage(systemName: "checkmark",
-                                     withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)), for: .normal)
+                                     withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)), for: .normal)
         closeButton.tintColor = .white
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
 
         sliderCaption.textColor = .lightGray
-        sliderCaption.font = .systemFont(ofSize: 14)
+        sliderCaption.font = .systemFont(ofSize: 12)
         sliderCaption.adjustsFontSizeToFitWidth = true
         sliderCaption.minimumScaleFactor = 0.7
         sliderValue.textColor = .white
-        sliderValue.font = .monospacedDigitSystemFont(ofSize: 14, weight: .medium)
+        sliderValue.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         sliderValue.textAlignment = .right
         slider.minimumTrackTintColor = Theme.accent
         slider.addTarget(self, action: #selector(sliderDown), for: .touchDown)
@@ -212,10 +208,10 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
 
         // Сетка в несколько столбцов с ВЕРТИКАЛЬНЫМ скроллом (ширина ячейки считается в layoutSubviews)
         gridLayout.scrollDirection = .vertical
-        gridLayout.itemSize = CGSize(width: 84, height: gridItemHeight)
+        gridLayout.itemSize = CGSize(width: 60, height: gridItemHeight)
         gridLayout.minimumInteritemSpacing = gridGap
-        gridLayout.minimumLineSpacing = 8
-        gridLayout.sectionInset = UIEdgeInsets(top: 12, left: gridInset, bottom: 24, right: gridInset)
+        gridLayout.minimumLineSpacing = 6
+        gridLayout.sectionInset = UIEdgeInsets(top: 4, left: gridInset, bottom: 12, right: gridInset)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: gridLayout)
         collectionView.backgroundColor = .clear
         collectionView.showsHorizontalScrollIndicator = false
@@ -230,7 +226,7 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         header.addSubview(titleLabel)
         header.addSubview(closeButton)
         extraButton.setTitleColor(Theme.accent, for: .normal)
-        extraButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        extraButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
         extraButton.addTarget(self, action: #selector(extraTapped), for: .touchUpInside)
         extraButton.isHidden = true
         header.addSubview(extraButton)
@@ -244,9 +240,9 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
             make.trailing.lessThanOrEqualTo(extraButton.snp.leading).offset(-8)
         }
         closeButton.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().inset(8)
+            make.trailing.equalToSuperview().inset(6)
             make.centerY.equalToSuperview()
-            make.size.equalTo(48)
+            make.size.equalTo(40)
         }
 
         sliderRow.addSubview(sliderCaption)
@@ -255,12 +251,12 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         sliderCaption.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(16)
             make.centerY.equalToSuperview()
-            make.width.equalTo(84)
+            make.width.equalTo(70)
         }
         sliderValue.snp.makeConstraints { make in
             make.trailing.equalToSuperview().inset(16)
             make.centerY.equalToSuperview()
-            make.width.equalTo(60)
+            make.width.equalTo(52)
         }
         slider.snp.makeConstraints { make in
             make.leading.equalTo(sliderCaption.snp.trailing).offset(4)
@@ -272,9 +268,9 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         stack.axis = .vertical
         addSubview(stack)
         stack.snp.makeConstraints { $0.edges.equalToSuperview() }
-        header.snp.makeConstraints { $0.height.equalTo(48) }
-        sliderRow.snp.makeConstraints { $0.height.equalTo(44) }
-        chipsView.snp.makeConstraints { $0.height.equalTo(46) }
+        header.snp.makeConstraints { $0.height.equalTo(38) }
+        sliderRow.snp.makeConstraints { $0.height.equalTo(34) }
+        chipsView.snp.makeConstraints { $0.height.equalTo(36) }
         chipsView.isHidden = true
         chipsView.onSelect = { [weak self] i in self?.onChip?(i) }
     }
@@ -286,7 +282,7 @@ final class EditPanelView: UIView, UICollectionViewDataSource, UICollectionViewD
         let width = bounds.width
         guard width > 0 else { return }
         let usable = width - gridInset * 2
-        let cols = max(4, floor((usable + gridGap) / (gridMinItemWidth + gridGap)))
+        let cols = max(5, floor((usable + gridGap) / (gridMinItemWidth + gridGap)))
         let w = floor((usable - gridGap * (cols - 1)) / cols)
         if abs(gridLayout.itemSize.width - w) > 0.5 || gridLayout.itemSize.height != gridItemHeight {
             gridLayout.itemSize = CGSize(width: w, height: gridItemHeight)

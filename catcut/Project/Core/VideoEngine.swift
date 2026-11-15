@@ -39,6 +39,12 @@ struct ProjectInfo {
     let crop: CGRect?
 }
 
+struct FilterLayerInfo {
+    let filterID: Int
+    let intensity: Float
+    let adjust: Adjustments
+}
+
 final class EditorInstruction: NSObject, AVVideoCompositionInstructionProtocol {
     let timeRange: CMTimeRange
     let enablePostProcessing: Bool = false
@@ -50,24 +56,23 @@ final class EditorInstruction: NSObject, AVVideoCompositionInstructionProtocol {
     let to: LayerInfo?
     let transitionID: Int
     let texts: [TextOverlay]
-    let overlays: [OverlayLayerInfo] // Массив оверлеев для этого интервала
+    let overlays: [OverlayLayerInfo]
+    let activeFilter: FilterLayerInfo? // Активный фильтр на интервале
     let project: ProjectInfo
 
-    init(timeRange: CMTimeRange, from: LayerInfo, to: LayerInfo?, transitionID: Int, texts: [TextOverlay], overlays: [OverlayLayerInfo], project: ProjectInfo) {
+    init(timeRange: CMTimeRange, from: LayerInfo, to: LayerInfo?, transitionID: Int, texts: [TextOverlay], overlays: [OverlayLayerInfo], activeFilter: FilterLayerInfo?, project: ProjectInfo) {
         self.timeRange = timeRange
         self.from = from
         self.to = to
         self.transitionID = transitionID
         self.texts = texts
         self.overlays = overlays
+        self.activeFilter = activeFilter
         self.project = project
         
         var ids: [NSValue] = [NSNumber(value: from.trackID)]
         if let to = to { ids.append(NSNumber(value: to.trackID)) }
-        // Добавляем trackID всех активных оверлеев в требуемые треки композитора
-        for o in overlays {
-            ids.append(NSNumber(value: o.trackID))
-        }
+        for o in overlays { ids.append(NSNumber(value: o.trackID)) }
         self.requiredSourceTrackIDs = ids
         super.init()
     }

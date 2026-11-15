@@ -103,6 +103,7 @@ extension ViewController {
         switch focusLane {
         case .video: splitVideo()
         case .overlay: splitOverlay()
+        case .filter: splitFilterOverlay()
         case .text: splitText()
         case .audio: splitAudio()
         }
@@ -129,6 +130,13 @@ extension ViewController {
         return overlays.lastIndex { t > $0.start && t < $0.start + $0.duration }
     }
 
+    func filterOverlayIndexAtPlayhead() -> Int? {
+        let t = displayTime
+        if let id = selectedFilterOverlayID, let i = filterOverlays.firstIndex(where: { $0.id == id }),
+           t > filterOverlays[i].start, t < filterOverlays[i].start + filterOverlays[i].duration { return i }
+        return filterOverlays.lastIndex { t > $0.start && t < $0.start + $0.duration }
+    }
+
     func splitOverlay() {
         let t = displayTime
         guard let i = overlayIndexAtPlayhead(), t - overlays[i].start > 0.2, overlays[i].start + overlays[i].duration - t > 0.2 else {
@@ -144,6 +152,24 @@ extension ViewController {
         second.duration = o.start + o.duration - t
         overlays[i].duration = t - o.start
         overlays.append(second)
+        rebuild()
+        refreshActivePanel()
+    }
+
+    func splitFilterOverlay() {
+        let t = displayTime
+        guard let i = filterOverlayIndexAtPlayhead(), t - filterOverlays[i].start > 0.2, filterOverlays[i].start + filterOverlays[i].duration - t > 0.2 else {
+            showToast("Поставьте красную палку внутрь фильтра на дорожке фильтров")
+            return
+        }
+        pushUndo()
+        let f = filterOverlays[i]
+        var second = f
+        second.id = UUID()
+        second.start = t
+        second.duration = f.start + f.duration - t
+        filterOverlays[i].duration = t - f.start
+        filterOverlays.append(second)
         rebuild()
         refreshActivePanel()
     }
@@ -252,6 +278,14 @@ extension ViewController {
             refreshActivePanel()
             return
         }
+        if let id = selectedFilterOverlayID {
+            pushUndo()
+            filterOverlays.removeAll { $0.id == id }
+            selectedFilterOverlayID = nil
+            rebuild()
+            refreshActivePanel()
+            return
+        }
         switch focusLane {
         case .text:
             guard let i = textIndexAtPlayhead() else { showToast("Выберите текст на дорожке"); return }
@@ -268,6 +302,12 @@ extension ViewController {
             guard let i = overlayIndexAtPlayhead() else { showToast("Выберите оверлей на дорожке"); return }
             pushUndo()
             overlays.remove(at: i)
+            rebuild()
+            refreshActivePanel()
+        case .filter:
+            guard let i = filterOverlayIndexAtPlayhead() else { showToast("Выберите фильтр на дорожке"); return }
+            pushUndo()
+            filterOverlays.remove(at: i)
             rebuild()
             refreshActivePanel()
         case .video:
@@ -324,6 +364,21 @@ extension ViewController {
             overlays.append(copy)
             clearSelection()
             selectedOverlayID = copy.id
+            rebuild()
+        case .filter:
+            guard let i = selectedFilterOverlayID.flatMap({ id in filterOverlays.firstIndex { $0.id == id } }) ?? filterOverlayIndexAtPlayhead() else {
+                showToast("Выберите фильтр на дорожке"); return
+            }
+            let f = filterOverlays[i]
+            guard f.start + f.duration + 0.3 < totalSeconds else { showToast("Нет места после фильтра"); return }
+            pushUndo()
+            var copy = f
+            copy.id = UUID()
+            copy.start = f.start + f.duration
+            copy.duration = min(f.duration, totalSeconds - copy.start)
+            filterOverlays.append(copy)
+            clearSelection()
+            selectedFilterOverlayID = copy.id
             rebuild()
         case .video:
             guard let i = currentClipIndex() else { showToast("Сначала добавьте видео"); return }

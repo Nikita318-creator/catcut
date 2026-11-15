@@ -38,10 +38,16 @@ final class ViewController: UIViewController {
         }
     }
 
-    struct Snapshot { var clips: [VideoClip]; var texts: [TextOverlay]; var audios: [AudioClip]; var overlays: [VideoOverlay]; var project: ProjectSettings }
+    struct Snapshot {
+        var clips: [VideoClip]
+        var texts: [TextOverlay]
+        var audios: [AudioClip]
+        var overlays: [VideoOverlay]
+        var filterOverlays: [FilterOverlay] // Добавлено
+        var project: ProjectSettings
+    }
     
     // UI
-    let topBar = UIView()
     let playerContainer = UIView()
     let controlBar = UIView()
     let timeLabel = UILabel()
@@ -66,6 +72,8 @@ final class ViewController: UIViewController {
     var overlayGestures: [UIGestureRecognizer] = []
     var overlayGestureActive = false
     var selectedOverlay: VideoOverlay? { overlays.first { $0.id == selectedOverlayID } }
+    var filterOverlays: [FilterOverlay] = []
+    var selectedFilterOverlayID: UUID?
     
     // State
     var clips: [VideoClip] = []
@@ -111,7 +119,7 @@ final class ViewController: UIViewController {
     let exporter = VideoExporter()
 
     let speeds: [Float] = [0.25, 0.5, 1, 1.5, 2, 3, 4]
-    let toolBarHeight: CGFloat = 100
+    let toolBarHeight: CGFloat = 72
 
     var totalSeconds: Double { build?.layout.total.secs ?? 0 }
     var selectedText: TextOverlay? { texts.first { $0.id == selectedTextID } }
@@ -196,113 +204,38 @@ final class ViewController: UIViewController {
 
     func setupLayout() {
         view.backgroundColor = Theme.background
-        [topBar, playerContainer, controlBar, timelineView, bottomContainer].forEach { view.addSubview($0) }
+        [playerContainer, controlBar, timelineView, bottomContainer].forEach { view.addSubview($0) }
 
-        topBar.snp.makeConstraints { make in
-            make.top.equalTo(view.safeAreaLayoutGuide)
+        // Фиксированный «слот» под тулбар: таймлайн привязан к нему, а не к bottomContainer.
+        // Благодаря этому, когда снизу выезжает панель (фильтры, переходы…), bottomContainer
+        // растёт ПОВЕРХ таймлайна и перекрывает дорожки, а превью остаётся прежнего размера.
+        let toolbarSlot = UILayoutGuide()
+        view.addLayoutGuide(toolbarSlot)
+        toolbarSlot.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
-            make.height.equalTo(60)
+            make.bottom.equalTo(view.safeAreaLayoutGuide)
+            make.height.equalTo(toolBarHeight)
         }
 
-        // 1. Создаем эффект стекла (Liquid Glass / Material)
-        let blurEffect = UIBlurEffect(style: .systemUltraThinMaterialDark)
-        let glassBackground = UIVisualEffectView(effect: blurEffect)
-        glassBackground.isUserInteractionEnabled = false // чтобы тапы проходили сквозь саму подложку на кнопку
-        glassBackground.layer.cornerRadius = 23
-        glassBackground.clipsToBounds = true
-        
-        // 2. Сама кнопка меню со стрелочкой
-        let menuButton = UIButton(type: .system)
-        var menuConfig = UIButton.Configuration.plain()
-        menuConfig.image = UIImage(systemName: "chevron.down",
-                                   withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold))
-        menuConfig.imagePadding = 0
-        menuButton.configuration = menuConfig
-        menuButton.tintColor = .white
-        
-        let saveAction = UIAction(title: "Сохранить", image: UIImage(systemName: "square.and.arrow.down.fill")) { [weak self] _ in
-            self?.didTapSaveDraft()
-        }
-        let draftsAction = UIAction(title: "Черновики", image: UIImage(systemName: "folder.fill")) { [weak self] _ in
-            self?.didTapDrafts()
-        }
-        let newProjectAction = UIAction(title: "Новый проект", image: UIImage(systemName: "plus.circle.fill"), attributes: .destructive) { [weak self] _ in
-            self?.newProject()
-        }
-        
-        menuButton.menu = UIMenu(title: "Управление проектом", children: [saveAction, draftsAction, newProjectAction])
-        menuButton.showsMenuAsPrimaryAction = true
-        
-        // 3. Собираем и верстаем через SnapKit
-        topBar.addSubview(glassBackground)
-        topBar.addSubview(menuButton)
-        
-        glassBackground.snp.makeConstraints { $0.edges.equalTo(menuButton) }
-        
-        menuButton.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(16)
-            make.centerY.equalToSuperview()
-            make.size.equalTo(46)
-        }
-
-        // Кнопка Экспорт (сохраняет позицию справа)
-        let exportButton = UIButton(type: .system)
-        exportButton.setTitle("Экспорт", for: .normal)
-        exportButton.titleLabel?.font = .boldSystemFont(ofSize: 17)
-        exportButton.setTitleColor(.black, for: .normal)
-        exportButton.backgroundColor = .white
-        exportButton.layer.cornerRadius = 20
-        exportButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 20, bottom: 10, right: 20)
-        exportButton.addTarget(self, action: #selector(didTapExport), for: .touchUpInside)
-        topBar.addSubview(exportButton)
-        exportButton.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().inset(16)
-            make.centerY.equalToSuperview()
-        }
-
-        // Кнопка Отмена (Undo)
-        let iconCfg = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
-        undoButton.setImage(UIImage(systemName: "arrow.uturn.backward", withConfiguration: iconCfg), for: .normal)
-        undoButton.tintColor = .white
-        undoButton.addTarget(self, action: #selector(didTapUndo), for: .touchUpInside)
-        topBar.addSubview(undoButton)
-        undoButton.snp.makeConstraints { make in
-            make.trailing.equalTo(exportButton.snp.leading).offset(-10)
-            make.centerY.equalToSuperview()
-            make.size.equalTo(50)
-        }
-
-        // Кнопка Повтор (Redo) — стрелка вперед
-        redoButton.setImage(UIImage(systemName: "arrow.uturn.forward", withConfiguration: iconCfg), for: .normal)
-        redoButton.tintColor = .white
-        redoButton.addTarget(self, action: #selector(didTapRedo), for: .touchUpInside)
-        topBar.addSubview(redoButton)
-        redoButton.snp.makeConstraints { make in
-            make.trailing.equalTo(undoButton.snp.leading).offset(-2)
-            make.centerY.equalToSuperview()
-            make.size.equalTo(50)
-        }
-
-        // Player: компактное превью. Слот — всё свободное место между шапкой и controlBar,
-        // сам плеер центрируется в нём и не выше ~28% экрана (остальное отдано кнопкам и панелям).
-        // Полноценный просмотр — кнопка «на весь экран» в controlBar.
+        // Превью: всё свободное место между верхом экрана и controlBar.
         let playerSlot = UILayoutGuide()
         view.addLayoutGuide(playerSlot)
         playerSlot.snp.makeConstraints { make in
-            make.top.equalTo(topBar.snp.bottom).offset(4)
+            make.top.equalTo(view.safeAreaLayoutGuide).offset(6)
             make.leading.trailing.equalToSuperview()
-            make.bottom.equalTo(controlBar.snp.top).offset(-2)
+            make.bottom.equalTo(controlBar.snp.top).offset(-4)
         }
         playerContainer.backgroundColor = .black
         playerContainer.layer.cornerRadius = 10
         playerContainer.clipsToBounds = true
         playerContainer.snp.makeConstraints { make in
             make.centerY.equalTo(playerSlot)
-            make.leading.trailing.equalToSuperview().inset(16)
+            make.leading.trailing.equalToSuperview().inset(12)
             make.height.equalTo(playerSlot).priority(.high)
             make.height.lessThanOrEqualTo(playerSlot)
-            make.height.lessThanOrEqualTo(view.snp.height).multipliedBy(0.28)
         }
+
+        setupMenuButton()
 
         emptyLabel.text = "Нажмите «+» на таймлайне\nили «Добавить», чтобы выбрать видео"
         emptyLabel.numberOfLines = 0
@@ -341,18 +274,18 @@ final class ViewController: UIViewController {
         playerContainer.addGestureRecognizer(rotate)
         installOverlayGestures()
 
-        // Control bar
+        // Control bar: время слева, по центру play, справа undo / redo / полный экран
         controlBar.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
-            make.height.equalTo(52)
+            make.height.equalTo(42)
             make.bottom.equalTo(timelineView.snp.top)
         }
         timeLabel.textColor = .lightGray
-        timeLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         timeLabel.text = "00:00.0 / 00:00.0"
         controlBar.addSubview(timeLabel)
         timeLabel.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(16)
+            make.leading.equalToSuperview().offset(14)
             make.centerY.equalToSuperview()
         }
         playButton.setImage(UIImage(systemName: "play.fill", withConfiguration: ViewController.playIconConfig), for: .normal)
@@ -361,32 +294,55 @@ final class ViewController: UIViewController {
         controlBar.addSubview(playButton)
         playButton.snp.makeConstraints { make in
             make.center.equalToSuperview()
-            make.size.equalTo(52)
+            make.size.equalTo(40)
         }
 
-        // Кнопка «Превью на весь экран»
+        let smallIcon = UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)
+
         let fullscreenButton = UIButton(type: .system)
-        fullscreenButton.setImage(UIImage(systemName: "arrow.up.left.and.arrow.down.right",
-                                          withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)), for: .normal)
+        fullscreenButton.setImage(UIImage(systemName: "arrow.up.left.and.arrow.down.right", withConfiguration: smallIcon), for: .normal)
         fullscreenButton.tintColor = .white
         fullscreenButton.addTarget(self, action: #selector(didTapFullscreen), for: .touchUpInside)
         controlBar.addSubview(fullscreenButton)
         fullscreenButton.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().inset(10)
+            make.trailing.equalToSuperview().inset(6)
             make.centerY.equalToSuperview()
-            make.size.equalTo(48)
+            make.size.equalTo(40)
         }
 
-        // Timeline
+        redoButton.setImage(UIImage(systemName: "arrow.uturn.forward", withConfiguration: smallIcon), for: .normal)
+        redoButton.tintColor = .white
+        redoButton.addTarget(self, action: #selector(didTapRedo), for: .touchUpInside)
+        controlBar.addSubview(redoButton)
+        redoButton.snp.makeConstraints { make in
+            make.trailing.equalTo(fullscreenButton.snp.leading)
+            make.centerY.equalToSuperview()
+            make.size.equalTo(40)
+        }
+
+        undoButton.setImage(UIImage(systemName: "arrow.uturn.backward", withConfiguration: smallIcon), for: .normal)
+        undoButton.tintColor = .white
+        undoButton.addTarget(self, action: #selector(didTapUndo), for: .touchUpInside)
+        controlBar.addSubview(undoButton)
+        undoButton.snp.makeConstraints { make in
+            make.trailing.equalTo(redoButton.snp.leading)
+            make.centerY.equalToSuperview()
+            make.size.equalTo(40)
+        }
+
+        // Timeline (высота фиксированная — всё, что не влезло, уходит на вертикальный скролл внутри ленты)
         timelineView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
-            make.bottom.equalTo(bottomContainer.snp.top)
+            make.bottom.equalTo(toolbarSlot.snp.top)
         }
         timelineHeightConstraint = timelineView.heightAnchor.constraint(equalToConstant: TimelineView.minHeight)
         timelineHeightConstraint.isActive = true
 
-        // Bottom container
+        // Bottom container: тулбар; при открытии панели растёт вверх поверх таймлайна
         bottomContainer.backgroundColor = Theme.panel
+        bottomContainer.layer.cornerRadius = 16
+        bottomContainer.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        bottomContainer.clipsToBounds = true
         bottomContainer.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
             make.bottom.equalTo(view.safeAreaLayoutGuide)
@@ -396,9 +352,9 @@ final class ViewController: UIViewController {
 
         let layout = UICollectionViewFlowLayout()
         layout.scrollDirection = .horizontal
-        layout.itemSize = CGSize(width: 86, height: 86)
-        layout.minimumLineSpacing = 4
-        layout.sectionInset = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+        layout.itemSize = CGSize(width: 62, height: 62)
+        layout.minimumLineSpacing = 2
+        layout.sectionInset = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
         toolCollection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         toolCollection.backgroundColor = .clear
         toolCollection.showsHorizontalScrollIndicator = false
@@ -411,6 +367,50 @@ final class ViewController: UIViewController {
         panel.isHidden = true
         bottomContainer.addSubview(panel)
         panel.snp.makeConstraints { $0.edges.equalToSuperview() }
+    }
+
+    /// Кнопка-меню (⌄) плавает поверх превью в левом верхнем углу: сохранить, черновики, экспорт, новый проект.
+    func setupMenuButton() {
+        let glass = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+        glass.isUserInteractionEnabled = false
+        glass.layer.cornerRadius = 17
+        glass.clipsToBounds = true
+
+        let menuButton = UIButton(type: .system)
+        var cfg = UIButton.Configuration.plain()
+        cfg.image = UIImage(systemName: "chevron.down",
+                            withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold))
+        cfg.contentInsets = .zero
+        menuButton.configuration = cfg
+        menuButton.tintColor = .white
+
+        let exportAction = UIAction(title: "Экспорт", image: UIImage(systemName: "square.and.arrow.up.fill")) { [weak self] _ in
+            self?.didTapExport()
+        }
+        let saveAction = UIAction(title: "Сохранить", image: UIImage(systemName: "square.and.arrow.down.fill")) { [weak self] _ in
+            self?.didTapSaveDraft()
+        }
+        let draftsAction = UIAction(title: "Черновики", image: UIImage(systemName: "folder.fill")) { [weak self] _ in
+            self?.didTapDrafts()
+        }
+        let newProjectAction = UIAction(title: "Новый проект", image: UIImage(systemName: "plus.circle.fill"), attributes: .destructive) { [weak self] _ in
+            self?.newProject()
+        }
+        menuButton.menu = UIMenu(title: "", children: [
+            exportAction,
+            UIMenu(title: "", options: .displayInline, children: [saveAction, draftsAction]),
+            newProjectAction
+        ])
+        menuButton.showsMenuAsPrimaryAction = true
+
+        view.addSubview(glass)
+        view.addSubview(menuButton)
+        menuButton.snp.makeConstraints { make in
+            make.top.equalTo(playerContainer).offset(8)
+            make.leading.equalTo(playerContainer).offset(8)
+            make.size.equalTo(34)
+        }
+        glass.snp.makeConstraints { $0.edges.equalTo(menuButton) }
     }
 
     func setupPlayer() {
@@ -495,6 +495,23 @@ final class ViewController: UIViewController {
         }
         timelineView.onOverlayTimeChanged = { [weak self] id, s, off, d in
             self?.commitOverlayTime(id, start: s, sourceStart: off, duration: d)
+        }
+        timelineView.onSelectFilterOverlay = { [weak self] id in
+            guard let self = self, let f = self.filterOverlays.first(where: { $0.id == id }) else { return }
+            self.clearSelection()
+            self.focusLane = .filter
+            self.selectedFilterOverlayID = id
+            if self.displayTime < f.start || self.displayTime >= f.start + f.duration {
+                let t = min(f.start + 0.01, self.totalSeconds)
+                self.seekTo(ticks(t))
+                self.updateTimeLabel(t)
+                self.timelineView.setPlayhead(time: t, force: true)
+            }
+            self.reloadTimeline()
+            self.refreshActivePanel()
+        }
+        timelineView.onFilterOverlayTimeChanged = { [weak self] id, s, d in
+            self?.commitFilterOverlayTime(id, start: s, duration: d)
         }
         
         panel.onClose = { [weak self] in self?.closePanel() }
@@ -776,7 +793,7 @@ final class ViewController: UIViewController {
         renderSize = b.renderSize
         
         let item = AVPlayerItem(asset: b.composition)
-        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, project: project)
+        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, filterOverlays: filterOverlays, project: project)
         item.audioMix = b.audioMix
         item.audioTimePitchAlgorithm = .spectral
         player.pause()
@@ -800,20 +817,24 @@ final class ViewController: UIViewController {
     /// Лёгкое обновление (фильтры, текст, оверлеи): композиция та же, меняем только инструкции.
     func refreshVideoComposition() {
         guard let b = build, let item = player.currentItem else { return }
-        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, project: project)
+        item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, filterOverlays: filterOverlays, project: project)
         if player.rate == 0 { seekTo(ticks(displayTime)) }
     }
 
+    // MARK: - Controllers/ViewController.swift (Метод reloadTimeline целиком)
+    
     func reloadTimeline() {
         timelineView.reload(clips: clips,
                             layout: build?.layout ?? TimelineLayout(clips: []),
                             texts: texts,
                             audios: audios,
                             overlays: overlays,
+                            filterOverlays: filterOverlays,
                             selectedClip: selectedClipIndex,
                             selectedText: selectedTextID,
                             selectedAudio: selectedAudioID,
                             selectedOverlay: selectedOverlayID,
+                            selectedFilterOverlay: selectedFilterOverlayID,
                             focus: focusLane)
     }
 
@@ -833,7 +854,7 @@ final class ViewController: UIViewController {
     // MARK: - Undo / Redo
     
     func pushUndo() {
-        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, overlays: overlays, project: project))
+        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, overlays: overlays, filterOverlays: filterOverlays, project: project))
         if undoStack.count > 50 { undoStack.removeFirst() }
         
         // Новое действие прерывает цепочку redo
@@ -852,7 +873,7 @@ final class ViewController: UIViewController {
     @objc func didTapUndo() {
         guard let s = undoStack.popLast() else { showToast("Нечего отменять"); return }
         // Текущее состояние отправляем в стек redo перед откатом
-        redoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, overlays: overlays, project: project))
+        redoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, overlays: overlays, filterOverlays: filterOverlays, project: project))
         
         clips = s.clips
         texts = s.texts
@@ -869,7 +890,7 @@ final class ViewController: UIViewController {
     @objc func didTapRedo() {
         guard let s = redoStack.popLast() else { showToast("Нечего возвращать"); return }
         // Текущее состояние отправляем обратно в стек undo
-        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, overlays: overlays, project: project))
+        undoStack.append(Snapshot(clips: clips, texts: texts, audios: audios, overlays: overlays, filterOverlays: filterOverlays, project: project))
         
         clips = s.clips
         texts = s.texts
@@ -902,6 +923,15 @@ final class ViewController: UIViewController {
         focusLane = .video
         selectedClipIndex = index
         if clips.count > 1 { transitionBoundary = min(index, clips.count - 2) }
+        
+        // Автопрыжок красной палки на старт клипа
+        if let b = build, index < b.layout.starts.count {
+            let startSecs = b.layout.starts[index].secs
+            seekTo(ticks(startSecs))
+            updateTimeLabel(startSecs)
+            timelineView.setPlayhead(time: startSecs, force: true)
+        }
+        
         reloadTimeline()
         updateTextBox()
         refreshActivePanel()
@@ -912,22 +942,30 @@ final class ViewController: UIViewController {
         clearSelection()
         focusLane = .text
         selectedTextID = id
-        if displayTime < o.start || displayTime >= o.start + o.duration {
-            let s = min(o.start + 0.01, totalSeconds)
-            seekTo(ticks(s))
-            updateTimeLabel(s)
-            timelineView.setPlayhead(time: s, force: true)
-        }
+        
+        // Автопрыжок на старт текста
+        let s = min(o.start, totalSeconds)
+        seekTo(ticks(s))
+        updateTimeLabel(s)
+        timelineView.setPlayhead(time: s, force: true)
+        
         reloadTimeline()
         updateTextBox()
         refreshActivePanel()
     }
 
     func selectAudio(_ id: UUID) {
-        guard audios.contains(where: { $0.id == id }) else { return }
+        guard let a = audios.first(where: { $0.id == id }) else { return }
         clearSelection()
         focusLane = .audio
         selectedAudioID = id
+        
+        // Автопрыжок на старт аудио
+        let s = min(a.start, totalSeconds)
+        seekTo(ticks(s))
+        updateTimeLabel(s)
+        timelineView.setPlayhead(time: s, force: true)
+        
         reloadTimeline()
         updateTextBox()
         refreshActivePanel()
@@ -940,6 +978,7 @@ final class ViewController: UIViewController {
         case .overlay: keepSelection = selectedOverlayID != nil
         case .text: keepSelection = selectedTextID != nil
         case .audio: keepSelection = selectedAudioID != nil
+        case .filter: keepSelection = selectedFilterOverlayID != nil
         }
         if !keepSelection { clearSelection() }
         focusLane = lane
@@ -961,5 +1000,38 @@ final class ViewController: UIViewController {
             if clips.count > 1 { transitionBoundary = min(i, clips.count - 2) }
             reloadTimeline()
         }
+    }
+    
+    func applyFilterToCurrentTime(filterID: Int, intensity: Float) {
+        pushUndo()
+        let t = displayTime
+        // Если на текущей таймлайн-позиции уже есть фильтр-оверлей, меняем его тип
+        if let idx = filterOverlays.firstIndex(where: { t >= $0.start && t <= $0.start + $0.duration }) {
+            filterOverlays[idx].filterID = filterID
+            filterOverlays[idx].filterIntensity = intensity
+        } else {
+            // Иначе создаем новый кусок фильтра длительностью 3 секунды (или по длине клипа)
+            let clipDur = clips.first?.displayDuration.secs ?? 3.0
+            let dur = min(clipDur, totalSeconds - t)
+            let newOverlay = FilterOverlay(filterID: filterID, filterIntensity: intensity, start: t, duration: max(0.3, dur))
+            filterOverlays.append(newOverlay)
+            selectedFilterOverlayID = newOverlay.id
+            focusLane = .filter
+        }
+        refreshVideoComposition()
+        reloadTimeline()
+        refreshActivePanel()
+    }
+
+    func commitFilterOverlayTime(_ id: UUID, start: Double, duration: Double) {
+        guard let idx = filterOverlays.firstIndex(where: { $0.id == id }) else { return }
+        pushUndo()
+        filterOverlays[idx].start = start
+        filterOverlays[idx].duration = duration
+        clearSelection()
+        focusLane = .filter
+        selectedFilterOverlayID = id
+        rebuild()
+        refreshActivePanel()
     }
 }

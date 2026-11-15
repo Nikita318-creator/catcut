@@ -301,3 +301,12 @@ struct OverlayLayerInfo {
     let orientation: CGImagePropertyOrientation
     let overlay: VideoOverlay
 }
+
+struct FilterOverlay: Codable {
+    var id = UUID()
+    var filterID: Int = 1
+    var filterIntensity: Float = 1.0
+    var adjust = Adjustments()
+    var start: Double = 0
+    var duration: Double = 3.0
+}

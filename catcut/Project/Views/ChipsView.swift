@@ -13,11 +13,11 @@ final class ChipsView: UIView {
         addSubview(scroll)
         scroll.snp.makeConstraints { $0.edges.equalToSuperview() }
         stack.axis = .horizontal
-        stack.spacing = 10
+        stack.spacing = 8
         scroll.addSubview(stack)
         stack.snp.makeConstraints { make in
-            make.edges.equalToSuperview().inset(UIEdgeInsets(top: 3, left: 14, bottom: 3, right: 14))
-            make.height.equalToSuperview().offset(-6)
+            make.edges.equalToSuperview().inset(UIEdgeInsets(top: 2, left: 12, bottom: 2, right: 12))
+            make.height.equalToSuperview().offset(-4)
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -28,9 +28,9 @@ final class ChipsView: UIView {
             buttons = titles.enumerated().map { (i, t) -> UIButton in
                 let b = UIButton(type: .system)
                 b.setTitle(t, for: .normal)
-                b.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-                b.layer.cornerRadius = 18
-                b.contentEdgeInsets = UIEdgeInsets(top: 6, left: 16, bottom: 6, right: 16)
+                b.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+                b.layer.cornerRadius = 14
+                b.contentEdgeInsets = UIEdgeInsets(top: 4, left: 13, bottom: 4, right: 13)
                 b.tag = i
                 b.addTarget(self, action: #selector(tapped(_:)), for: .touchUpInside)
                 stack.addArrangedSubview(b)

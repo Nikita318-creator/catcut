@@ -136,7 +136,7 @@ extension ViewController {
             clampOverlays(total: TimelineLayout(clips: clips).total.secs)
             build = EditorBuild.make(clips: clips, audios: audios, overlays: overlays, project: project)
             if let b = build, let item = player.currentItem {
-                item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, project: project)
+                item.videoComposition = b.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, filterOverlays: filterOverlays, project: project)
             }
             reloadTimeline()
         }

@@ -25,8 +25,12 @@ extension ViewController {
         activePanel = nil
         panel.isHidden = true
         toolCollection.isHidden = false
-        setBottomHeight(toolBarHeight)
+        setBottomHeight(toolBarHeight)   // панель уезжает вниз — дорожки снова открыты
     }
+
+    /// Панель перекрывает ровно тулбар + дорожки. Превью и controlBar не трогаем — картинка остаётся прежнего размера,
+    /// и эффект фильтра/перехода виден на большом превью.
+    var panelOverlayHeight: CGFloat { toolBarHeight + timelineHeightConstraint.constant }
 
     func setBottomHeight(_ h: CGFloat) {
         guard bottomHeightConstraint.constant != h else { return }
@@ -48,7 +52,7 @@ extension ViewController {
         case .text: refreshTextPanel(keepScroll: keepScroll)
         case .audio: refreshAudioPanel(keepScroll)
         }
-        if activePanel != nil { setBottomHeight(panel.preferredHeight) }
+        if activePanel != nil { setBottomHeight(panelOverlayHeight) }
     }
 
     // MARK: Speed
