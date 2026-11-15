@@ -250,7 +250,7 @@ extension Adjustments {
 }
 
 // =====================================================================
-// MARK: - Filter presets (мягкие, «дорогие»)
+// MARK: - Filter presets (новые красивые глубокие фильтры с юзер-френдли названиями)
 // =====================================================================
 
 enum FilterCategory: Int, CaseIterable {
@@ -286,63 +286,73 @@ enum FilterCatalog {
             list.append(FilterPreset(name: name, category: cat, adjust: a))
         }
 
-        // Нежные
-        p("Нежность", .soft) { $0.contrast = -0.06; $0.saturation = -0.08; $0.fade = 0.22; $0.warmth = 0.08; $0.glow = 0.25; $0.highlights = -0.15 }
-        p("Сливки", .soft) { $0.brightness = 0.04; $0.contrast = -0.08; $0.saturation = -0.12; $0.warmth = 0.25; $0.fade = 0.2; $0.shadows = 0.15; $0.glow = 0.15 }
-        p("Пастель", .soft) { $0.brightness = 0.08; $0.contrast = -0.12; $0.saturation = -0.18; $0.fade = 0.3; $0.vibrance = 0.1 }
-        p("Дымка", .soft) { $0.brightness = 0.06; $0.contrast = -0.18; $0.fade = 0.38; $0.glow = 0.35; $0.saturation = -0.1 }
-        p("Персик", .soft) { $0.warmth = 0.22; $0.tint = 0.12; $0.brightness = 0.05; $0.fade = 0.18; $0.glow = 0.2; $0.retouch = 0.2 }
-        p("Облако", .soft) { $0.brightness = 0.1; $0.contrast = -0.1; $0.saturation = -0.25; $0.warmth = -0.05; $0.fade = 0.25; $0.glow = 0.2 }
-        p("Молоко", .soft) { $0.brightness = 0.12; $0.contrast = -0.15; $0.saturation = -0.3; $0.fade = 0.3 }
+        // --- Нежные / Атмосферные ---
+        p("Закат в сентябре", .soft) { $0.warmth = 0.35; $0.tint = 0.08; $0.contrast = 0.12; $0.fade = 0.18; $0.highlights = -0.2; $0.shadowTone = 0.55; $0.shadowToneAmount = 0.25; $0.glow = 0.22; $0.vignette = 0.2 }
+        p("Уютное кафе", .soft) { $0.warmth = 0.28; $0.contrast = -0.05; $0.saturation = -0.1; $0.fade = 0.25; $0.shadows = 0.12; $0.glow = 0.2; $0.grain = 0.1 }
+        p("Раннее утро", .soft) { $0.brightness = 0.08; $0.warmth = -0.1; $0.contrast = -0.12; $0.fade = 0.3; $0.glow = 0.28; $0.saturation = -0.15 }
+        p("Туманное утро", .soft) { $0.brightness = 0.1; $0.contrast = -0.18; $0.fade = 0.38; $0.glow = 0.35; $0.saturation = -0.2 }
+        p("Прованс", .soft) { $0.warmth = 0.15; $0.tint = 0.12; $0.contrast = -0.08; $0.saturation = -0.12; $0.fade = 0.22; $0.glow = 0.18 }
+        p("Утренний кофе", .soft) { $0.warmth = 0.22; $0.contrast = 0.05; $0.fade = 0.2; $0.shadowTone = 0.52; $0.shadowToneAmount = 0.2; $0.glow = 0.15 }
+        p("Мягкий свет", .soft) { $0.brightness = 0.06; $0.contrast = -0.1; $0.saturation = -0.15; $0.fade = 0.28; $0.glow = 0.25 }
+        p("Импрессионизм", .soft) { $0.warmth = 0.18; $0.contrast = -0.15; $0.saturation = 0.05; $0.fade = 0.3; $0.glow = 0.3 }
+        p("Кашемир", .soft) { $0.warmth = 0.12; $0.contrast = -0.08; $0.saturation = -0.1; $0.fade = 0.25; $0.retouch = 0.25; $0.glow = 0.15 }
+        p("Облачный день", .soft) { $0.warmth = -0.08; $0.contrast = -0.1; $0.saturation = -0.2; $0.fade = 0.22; $0.glow = 0.2 }
 
-        // Кино
-        p("Кино", .cinema) { $0.contrast = 0.15; $0.saturation = -0.08; $0.fade = 0.12; $0.shadowTone = 0.52; $0.shadowToneAmount = 0.28; $0.highTone = 0.08; $0.highToneAmount = 0.22; $0.vignette = 0.25; $0.grain = 0.12 }
-        p("Тил и оранж", .cinema) { $0.contrast = 0.18; $0.saturation = 0.05; $0.shadowTone = 0.5; $0.shadowToneAmount = 0.4; $0.highTone = 0.07; $0.highToneAmount = 0.35; $0.vignette = 0.15 }
-        p("Ночной город", .cinema) { $0.brightness = -0.05; $0.contrast = 0.2; $0.saturation = 0.1; $0.shadowTone = 0.62; $0.shadowToneAmount = 0.4; $0.highTone = 0.88; $0.highToneAmount = 0.25; $0.glow = 0.3; $0.vignette = 0.3 }
-        p("Драма", .cinema) { $0.contrast = 0.3; $0.saturation = -0.2; $0.shadows = -0.2; $0.vignette = 0.4; $0.fade = 0.08; $0.grain = 0.15 }
-        p("Блокбастер", .cinema) { $0.contrast = 0.22; $0.saturation = 0.1; $0.warmth = -0.05; $0.shadowTone = 0.55; $0.shadowToneAmount = 0.3; $0.highTone = 0.08; $0.highToneAmount = 0.2; $0.sharpen = 0.3 }
-        p("Мрак", .cinema) { $0.brightness = -0.1; $0.contrast = 0.25; $0.saturation = -0.3; $0.vignette = 0.5; $0.shadowTone = 0.6; $0.shadowToneAmount = 0.25 }
+        // --- Кинематографичные ---
+        p("Золотой закат", .cinema) { $0.warmth = 0.45; $0.tint = 0.15; $0.contrast = 0.22; $0.shadowTone = 0.52; $0.shadowToneAmount = 0.35; $0.highTone = 0.08; $0.highToneAmount = 0.3; $0.vignette = 0.25; $0.glow = 0.25 }
+        p("Глубокие тени", .cinema) { $0.contrast = 0.28; $0.saturation = -0.15; $0.shadows = -0.25; $0.shadowTone = 0.6; $0.shadowToneAmount = 0.45; $0.vignette = 0.4; $0.grain = 0.15 }
+        p("Теплый вечер", .cinema) { $0.warmth = 0.32; $0.contrast = 0.15; $0.shadowTone = 0.5; $0.shadowToneAmount = 0.3; $0.highTone = 0.06; $0.highToneAmount = 0.2; $0.vignette = 0.2 }
+        p("Ночной мегаполис", .cinema) { $0.brightness = -0.08; $0.contrast = 0.25; $0.saturation = 0.12; $0.shadowTone = 0.62; $0.shadowToneAmount = 0.45; $0.highTone = 0.88; $0.highToneAmount = 0.3; $0.glow = 0.35; $0.vignette = 0.35 }
+        p("Кинематографичная драма", .cinema) { $0.contrast = 0.32; $0.saturation = -0.22; $0.shadows = -0.3; $0.vignette = 0.45; $0.fade = 0.08; $0.grain = 0.18 }
+        p("Бархатная ночь", .cinema) { $0.brightness = -0.12; $0.contrast = 0.3; $0.shadowTone = 0.65; $0.shadowToneAmount = 0.5; $0.vignette = 0.5; $0.glow = 0.2 }
+        p("Лондонский дождь", .cinema) { $0.warmth = -0.2; $0.contrast = 0.18; $0.saturation = -0.25; $0.shadowTone = 0.6; $0.shadowToneAmount = 0.35; $0.vignette = 0.3 }
+        p("Меланхолия", .cinema) { $0.contrast = 0.2; $0.saturation = -0.3; $0.shadows = -0.15; $0.fade = 0.15; $0.vignette = 0.35 }
+        p("Городские тени", .cinema) { $0.contrast = 0.25; $0.saturation = -0.1; $0.shadowTone = 0.58; $0.shadowToneAmount = 0.4; $0.vignette = 0.3 }
+        p("Киноклассика", .cinema) { $0.contrast = 0.2; $0.saturation = -0.05; $0.shadowTone = 0.52; $0.shadowToneAmount = 0.3; $0.highTone = 0.08; $0.highToneAmount = 0.25; $0.grain = 0.12 }
+        p("Тил и оранж", .cinema) { $0.contrast = 0.22; $0.saturation = 0.08; $0.shadowTone = 0.5; $0.shadowToneAmount = 0.45; $0.highTone = 0.08; $0.highToneAmount = 0.35; $0.vignette = 0.2 }
 
-        // Портрет
-        p("Глянец", .portrait) { $0.retouch = 0.55; $0.glow = 0.3; $0.brightness = 0.05; $0.warmth = 0.1; $0.saturation = 0.05; $0.contrast = 0.05 }
-        p("Кожа", .portrait) { $0.retouch = 0.6; $0.warmth = 0.12; $0.tint = 0.05; $0.vibrance = 0.15; $0.brightness = 0.04; $0.highlights = -0.1 }
-        p("Свежесть", .portrait) { $0.vibrance = 0.3; $0.brightness = 0.06; $0.warmth = -0.04; $0.retouch = 0.3; $0.glow = 0.15 }
-        p("Румянец", .portrait) { $0.warmth = 0.15; $0.tint = 0.15; $0.saturation = 0.05; $0.retouch = 0.4; $0.glow = 0.2 }
-        p("Гламур", .portrait) { $0.retouch = 0.5; $0.glow = 0.45; $0.brightness = 0.07; $0.contrast = 0.08; $0.vibrance = 0.2 }
-        p("Студия", .portrait) { $0.contrast = 0.12; $0.sharpen = 0.3; $0.retouch = 0.25; $0.brightness = 0.03; $0.warmth = 0.05 }
+        // --- Портретные ---
+        p("Шелковый портрет", .portrait) { $0.retouch = 0.65; $0.glow = 0.35; $0.brightness = 0.06; $0.warmth = 0.12; $0.saturation = 0.05; $0.contrast = 0.08 }
+        p("Пепельная роза", .portrait) { $0.retouch = 0.5; $0.warmth = 0.15; $0.tint = 0.1; $0.vibrance = 0.12; $0.brightness = 0.05; $0.highlights = -0.12 }
+        p("Студийный свет", .portrait) { $0.contrast = 0.15; $0.sharpen = 0.35; $0.retouch = 0.3; $0.brightness = 0.04; $0.warmth = 0.06 }
+        p("Фарфор", .portrait) { $0.retouch = 0.7; $0.brightness = 0.08; $0.contrast = -0.05; $0.saturation = -0.1; $0.glow = 0.3 }
+        p("Сияние кожи", .portrait) { $0.retouch = 0.55; $0.glow = 0.4; $0.vibrance = 0.2; $0.brightness = 0.06 }
+        p("Теплый взгляд", .portrait) { $0.warmth = 0.22; $0.retouch = 0.45; $0.tint = 0.08; $0.shadows = 0.1 }
+        p("Бархатная кожа", .portrait) { $0.retouch = 0.6; $0.contrast = 0.05; $0.warmth = 0.1; $0.fade = 0.1 }
+        p("Глянец журнала", .portrait) { $0.retouch = 0.5; $0.contrast = 0.18; $0.sharpen = 0.25; $0.vibrance = 0.15 }
+        p("Натуральный тон", .portrait) { $0.retouch = 0.4; $0.warmth = 0.05; $0.brightness = 0.03 }
 
-        // Ретро
-        p("Плёнка 90-х", .retro) { $0.warmth = 0.2; $0.fade = 0.32; $0.grain = 0.35; $0.saturation = -0.12; $0.contrast = 0.1; $0.vignette = 0.22; $0.highlights = -0.15 }
-        p("Полароид", .retro) { $0.warmth = 0.15; $0.tint = 0.06; $0.fade = 0.28; $0.contrast = -0.05; $0.saturation = -0.05; $0.vignette = 0.3; $0.grain = 0.15 }
-        p("Винтаж", .retro) { $0.warmth = 0.3; $0.saturation = -0.25; $0.fade = 0.35; $0.contrast = 0.05; $0.grain = 0.25; $0.vignette = 0.3 }
-        p("VHS", .retro) { $0.saturation = 0.1; $0.warmth = 0.05; $0.fade = 0.15; $0.grain = 0.4; $0.blur = 0.08; $0.contrast = 0.1 }
-        p("70-е", .retro) { $0.warmth = 0.35; $0.tint = 0.1; $0.saturation = 0.15; $0.fade = 0.2; $0.contrast = 0.1; $0.grain = 0.2 }
-        p("Кодак", .retro) { $0.warmth = 0.15; $0.saturation = 0.12; $0.contrast = 0.12; $0.fade = 0.1; $0.grain = 0.2; $0.highlights = -0.1 }
-        p("Выцветшее фото", .retro) { $0.saturation = -0.3; $0.fade = 0.45; $0.warmth = 0.15; $0.contrast = -0.1; $0.vignette = 0.2 }
+        // --- Ретро / Плёнка ---
+        p("Пыльная пленка", .retro) { $0.warmth = 0.25; $0.fade = 0.35; $0.grain = 0.4; $0.saturation = -0.15; $0.contrast = 0.12; $0.vignette = 0.28; $0.highlights = -0.18 }
+        p("Старый альбом", .retro) { $0.warmth = 0.35; $0.saturation = -0.3; $0.fade = 0.4; $0.contrast = 0.08; $0.grain = 0.3; $0.vignette = 0.35 }
+        p("Винтажная открытка", .retro) { $0.warmth = 0.2; $0.tint = 0.08; $0.fade = 0.3; $0.contrast = -0.05; $0.saturation = -0.1; $0.vignette = 0.32; $0.grain = 0.2 }
+        p("Парижские улицы", .retro) { $0.warmth = 0.18; $0.saturation = -0.2; $0.fade = 0.28; $0.contrast = 0.1; $0.grain = 0.25; $0.vignette = 0.25 }
+        p("Аналоговый шум", .retro) { $0.saturation = -0.1; $0.warmth = 0.1; $0.fade = 0.2; $0.grain = 0.5; $0.contrast = 0.15 }
+        p("Ностальгия", .retro) { $0.warmth = 0.3; $0.saturation = -0.25; $0.fade = 0.35; $0.contrast = 0.05; $0.grain = 0.28; $0.vignette = 0.3 }
+        p("Ретро-волна", .retro) { $0.saturation = 0.15; $0.warmth = 0.08; $0.fade = 0.18; $0.grain = 0.35; $0.contrast = 0.18 }
+        p("Плёночная драма", .retro) { $0.warmth = 0.15; $0.contrast = 0.22; $0.fade = 0.2; $0.grain = 0.38; $0.vignette = 0.3 }
+        p("Выцветший кадр", .retro) { $0.saturation = -0.35; $0.fade = 0.48; $0.warmth = 0.18; $0.contrast = -0.12; $0.vignette = 0.22 }
+        p("Полароид 80-х", .retro) { $0.warmth = 0.28; $0.tint = 0.05; $0.fade = 0.32; $0.contrast = -0.08; $0.grain = 0.25; $0.vignette = 0.28 }
+        p("Эффект VHS", .retro) { $0.saturation = 0.1; $0.warmth = 0.05; $0.fade = 0.18; $0.grain = 0.45; $0.contrast = 0.12; $0.blur = 0.05 }
 
-        // Ч/Б
-        p("Ч/Б мягкий", .bw) { $0.saturation = -1; $0.fade = 0.2; $0.contrast = -0.05; $0.grain = 0.1 }
-        p("Ч/Б контраст", .bw) { $0.saturation = -1; $0.contrast = 0.4; $0.vignette = 0.25 }
-        p("Ч/Б плёнка", .bw) { $0.saturation = -1; $0.contrast = 0.15; $0.fade = 0.15; $0.grain = 0.45; $0.vignette = 0.25 }
-        p("Серебро", .bw) { $0.saturation = -1; $0.brightness = 0.05; $0.contrast = 0.1; $0.glow = 0.2 }
-        p("Графит", .bw) { $0.saturation = -1; $0.contrast = 0.3; $0.brightness = -0.1; $0.vignette = 0.4 }
+        // --- Ч/Б ---
+        p("Благородный Ч/Б", .bw) { $0.saturation = -1; $0.contrast = 0.25; $0.fade = 0.18; $0.grain = 0.2; $0.vignette = 0.25 }
+        p("Пленочный монохром", .bw) { $0.saturation = -1; $0.contrast = 0.3; $0.fade = 0.22; $0.grain = 0.45; $0.vignette = 0.3 }
+        p("Мягкий монохром", .bw) { $0.saturation = -1; $0.fade = 0.28; $0.contrast = -0.05; $0.grain = 0.12 }
+        p("Контрастный нуар", .bw) { $0.saturation = -1; $0.contrast = 0.48; $0.brightness = -0.08; $0.vignette = 0.45; $0.grain = 0.25 }
+        p("Серебряный век", .bw) { $0.saturation = -1; $0.brightness = 0.05; $0.contrast = 0.15; $0.glow = 0.25; $0.grain = 0.15 }
+        p("Уголь и мел", .bw) { $0.saturation = -1; $0.contrast = 0.4; $0.shadows = -0.2; $0.highlights = 0.1; $0.vignette = 0.35 }
+        p("Винтажный монохром", .bw) { $0.saturation = -1; $0.contrast = 0.2; $0.fade = 0.3; $0.grain = 0.4; $0.vignette = 0.3 }
 
-        // Яркие
-        p("Яркий день", .vivid) { $0.vibrance = 0.3; $0.saturation = 0.15; $0.contrast = 0.1; $0.brightness = 0.03 }
-        p("Сочный", .vivid) { $0.saturation = 0.35; $0.contrast = 0.12; $0.vibrance = 0.2 }
-        p("Лето", .vivid) { $0.warmth = 0.2; $0.saturation = 0.2; $0.brightness = 0.05; $0.contrast = 0.08; $0.glow = 0.12 }
-        p("Осень", .vivid) { $0.warmth = 0.35; $0.saturation = 0.1; $0.highTone = 0.08; $0.highToneAmount = 0.2; $0.contrast = 0.1; $0.vignette = 0.15 }
-        p("Лес", .vivid) {
-            $0.contrast = 0.1; $0.vignette = 0.2
-            $0.hsl[9 + 1] = 0.4; $0.hsl[6 + 1] = 0.2
-        }
-        p("Море", .vivid) {
-            $0.warmth = -0.15; $0.saturation = 0.15; $0.contrast = 0.1
-            $0.hsl[12 + 1] = 0.4; $0.hsl[15 + 1] = 0.3
-        }
-        p("Закат", .vivid) { $0.warmth = 0.45; $0.tint = 0.12; $0.saturation = 0.15; $0.contrast = 0.1; $0.highTone = 0.05; $0.highToneAmount = 0.3; $0.vignette = 0.25; $0.glow = 0.2 }
-        p("Неон", .vivid) { $0.saturation = 0.3; $0.contrast = 0.2; $0.shadowTone = 0.75; $0.shadowToneAmount = 0.4; $0.highTone = 0.9; $0.highToneAmount = 0.3; $0.glow = 0.35; $0.vignette = 0.2 }
-        p("Лёд", .vivid) { $0.warmth = -0.35; $0.saturation = -0.05; $0.brightness = 0.05; $0.contrast = 0.1; $0.glow = 0.15 }
+        // --- Яркие / Сочные ---
+        p("Северный ветер", .vivid) { $0.warmth = -0.25; $0.saturation = 0.15; $0.contrast = 0.18; $0.glow = 0.15; $0.hsl[12 + 1] = 0.35; $0.hsl[15 + 1] = 0.25 }
+        p("Летний полдень", .vivid) { $0.vibrance = 0.35; $0.saturation = 0.2; $0.contrast = 0.15; $0.brightness = 0.04 }
+        p("Осенний парк", .vivid) { $0.warmth = 0.38; $0.saturation = 0.18; $0.highTone = 0.08; $0.highToneAmount = 0.25; $0.contrast = 0.12; $0.vignette = 0.18 }
+        p("Морской бриз", .vivid) { $0.warmth = -0.18; $0.vibrance = 0.3; $0.saturation = 0.22; $0.contrast = 0.12; $0.hsl[12 + 1] = 0.4 }
+        p("Солнечные блики", .vivid) { $0.warmth = 0.3; $0.saturation = 0.2; $0.brightness = 0.06; $0.glow = 0.3; $0.vignette = 0.15 }
+        p("Изумрудный сад", .vivid) { $0.contrast = 0.15; $0.vibrance = 0.25; $0.vignette = 0.2; $0.hsl[9 + 1] = 0.45; $0.hsl[6 + 1] = 0.25 }
+        p("Неоновый дождь", .vivid) { $0.saturation = 0.35; $0.contrast = 0.25; $0.shadowTone = 0.72; $0.shadowToneAmount = 0.4; $0.highTone = 0.88; $0.highToneAmount = 0.3; $0.glow = 0.4; $0.vignette = 0.25 }
+
         return list
     }()
 
