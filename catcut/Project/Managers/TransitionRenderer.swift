@@ -8,9 +8,9 @@ import CoreImage
 // =====================================================================
 
 enum TransitionRenderer {
-
+    
     // MARK: - Metal GPU Warp Kernels
-
+    
     private static var sineRippleKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 sineRipple(destination coordinates, float t, float freq, float amp, vec2 center) {
@@ -22,7 +22,7 @@ enum TransitionRenderer {
         }
         """)
     }()
-
+    
     private static var hyperbolicKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 hyperbolicSaddle(destination coordinates, float t, float strength, vec2 center) {
@@ -33,7 +33,7 @@ enum TransitionRenderer {
         }
         """)
     }()
-
+    
     private static var liquidWarpKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 liquidWarp(destination coordinates, float t, float freq, float amp, vec2 center) {
@@ -45,7 +45,7 @@ enum TransitionRenderer {
         }
         """)
     }()
-
+    
     private static var perspectiveMorphKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 perspectiveMorph(destination coordinates, float t, float angle, vec2 center) {
@@ -56,7 +56,7 @@ enum TransitionRenderer {
         }
         """)
     }()
-
+    
     private static var glassRefractionKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 glassRefraction(destination coordinates, float t, float strength, vec2 center) {
@@ -67,7 +67,7 @@ enum TransitionRenderer {
         }
         """)
     }()
-
+    
     private static var fisheyeKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 fisheyeLens(destination coordinates, float t, float strength, vec2 center) {
@@ -79,7 +79,7 @@ enum TransitionRenderer {
         }
         """)
     }()
-
+    
     private static var warpSlideKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 warpSlide(destination coordinates, float t, vec2 dir, float elasticity, vec2 center) {
@@ -89,7 +89,7 @@ enum TransitionRenderer {
         }
         """)
     }()
-
+    
     private static var blockGlitchKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 blockGlitch(destination coordinates, float t, float blockSize, vec2 center) {
@@ -101,7 +101,7 @@ enum TransitionRenderer {
         }
         """)
     }()
-
+    
     private static var heatWaveKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 heatWave(destination coordinates, float t, float distortion, vec2 center) {
@@ -112,7 +112,7 @@ enum TransitionRenderer {
         }
         """)
     }()
-
+    
     private static var liquidRippleKernel: CIWarpKernel? = {
         CIWarpKernel(source: """
         kernel vec2 liquidRipple(destination coordinates, float t, float freq, float amp, vec2 center) {
@@ -125,18 +125,116 @@ enum TransitionRenderer {
         """)
     }()
     
-
+    private static let richSrc_hyperbolicLens = """
+        kernel vec4 hyperbolicLens(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
+            vec2 uv = (destCoord() - org) / size;
+            float asp = size.x / size.y;
+            float s = sin(e * 3.14159265);
+            vec2 p = (uv - 0.5) * vec2(asp, 1.0);
+            float zoom = 1.0 + s * 0.28 * p1;
+            vec2 scaledP = p / zoom;
+            float r2 = dot(scaledP, scaledP);
+            vec2 distort = scaledP * (1.0 + p2 * s * r2);
+            vec2 uA = (distort / vec2(asp, 1.0)) + 0.5;
+            vec2 uB = (distort / vec2(asp, 1.0)) + 0.5;
+            vec3 cA = sample(A, samplerTransform(A, org + mir(uA) * size)).rgb;
+            vec3 cB = sample(B, samplerTransform(B, org + mir(uB) * size)).rgb;
+            float m = sstep(0.3, 0.7, e);
+            vec3 col = mix(cA, cB, m);
+            return vec4(col, 1.0);
+        }
+        """
+    
+    private static let richSrc_kineticSlices = """
+        kernel vec4 kineticSlices(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
+            vec2 uv = (destCoord() - org) / size;
+            float asp = size.x / size.y;
+            float s = sin(e * 3.14159265);
+            
+            // Плавная кинетическая волна без резких разрезов и полос
+            float wave = sin(uv.y * 4.5 + e * 6.2831853) * cos(uv.x * 2.5 - e * 3.14159265);
+            float shift = wave * p1 * s * 0.14;
+            
+            // Внутренний зум, чтобы движение происходило строго внутри кадра
+            float zoom = 1.0 + s * 0.28 * p2;
+            vec2 centered = (uv - 0.5) / zoom + 0.5;
+            
+            vec2 uA = centered + vec2(shift, shift * 0.35);
+            vec2 uB = centered - vec2(shift, shift * 0.35);
+            
+            // Мягкое оптическое расслоение при пике скорости
+            vec2 ch = vec2(0.008 * s * p2, 0.0);
+            vec3 cA = vec3(
+                sample(A, samplerTransform(A, org + mir(uA + ch) * size)).r,
+                sample(A, samplerTransform(A, org + mir(uA) * size)).g,
+                sample(A, samplerTransform(A, org + mir(uA - ch) * size)).b
+            );
+            vec3 cB = vec3(
+                sample(B, samplerTransform(B, org + mir(uB + ch) * size)).r,
+                sample(B, samplerTransform(B, org + mir(uB) * size)).g,
+                sample(B, samplerTransform(B, org + mir(uB - ch) * size)).b
+            );
+            
+            float m = sstep(0.25, 0.75, e);
+            return vec4(mix(cA, cB, m), 1.0);
+        }
+        """
+    
+    private static let richSrc_organicVortex = """
+        kernel vec4 organicVortex(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
+            vec2 uv = (destCoord() - org) / size;
+            float asp = size.x / size.y;
+            float s = sin(e * 3.14159265);
+            vec2 p = (uv - 0.5) * vec2(asp, 1.0);
+            float r = length(p);
+            float angle = p1 * s * exp(-r * 1.8);
+            vec2 rotP = rot(p, angle);
+            float zoom = 1.0 + s * 0.25;
+            vec2 finalP = rotP / zoom;
+            vec2 finalUv = finalP / vec2(asp, 1.0) + 0.5;
+            vec3 cA = sample(A, samplerTransform(A, org + mir(finalUv + vec2(p2 * s * 0.025, 0.0)) * size)).rgb;
+            vec3 cB = sample(B, samplerTransform(B, org + mir(finalUv - vec2(p2 * s * 0.025, 0.0)) * size)).rgb;
+            float m = sstep(0.3, 0.7, e);
+            vec3 col = mix(cA, cB, m);
+            return vec4(col, 1.0);
+        }
+        """
+    
+    private static let richSrc_directionalSlash = """
+        kernel vec4 directionalSlash(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
+            vec2 uv = (destCoord() - org) / size;
+            float s = sin(e * 3.14159265);
+            float zoom = 1.0 + s * 0.32 * p1;
+            vec2 scaledUv = (uv - 0.5) / zoom + 0.5;
+            vec3 acc = vec3(0.0);
+            float wSum = 0.0;
+            for (float i = 0.0; i < 12.0; i += 1.0) {
+                float f = i / 11.0 - 0.5;
+                vec2 offset = vec2(f * p2 * s * 0.28, 0.0);
+                vec2 uA = scaledUv + offset;
+                vec2 uB = scaledUv + offset;
+                vec3 c = mix(sample(A, samplerTransform(A, org + mir(uA) * size)).rgb,
+                             sample(B, samplerTransform(B, org + mir(uB) * size)).rgb, e);
+                float w = exp(-abs(f) * 2.0);
+                acc += c * w;
+                wSum += w;
+            }
+            return vec4(acc / wSum, 1.0);
+        }
+        """
+    
+    
     // =====================================================================
     // MARK: - RiCH GPU kernels (Core Image Kernel Language)
     // Один CIKernel на переход: многотаповый motion/radial blur, поля смещения (fbm + domain warp),
     // диаграммы Вороного, покадровая хроматическая аберрация, mirror-repeat сэмплинг.
     // Если ядро не скомпилировалось — переход мягко падает в обычный кроссфейд (см. Xcode console).
     // =====================================================================
-
+    
     private static let richLock = NSLock()
     private static var richKernels: [RichKind: CIKernel] = [:]
     private static var richFailed: Set<RichKind> = []
-
+    
     private static func richKernel(_ kind: RichKind) -> CIKernel? {
         richLock.lock()
         defer { richLock.unlock() }
@@ -147,12 +245,12 @@ enum TransitionRenderer {
             return k
         }
         richFailed.insert(kind)
-        #if DEBUG
+#if DEBUG
         print("[RiCH] kernel '\(kind)' failed to compile - fallback to crossfade")
-        #endif
+#endif
         return nil
     }
-
+    
     private static func renderRich(_ kind: RichKind, from: CIImage, to: CIImage, e: CGFloat,
                                    a: CGFloat, b: CGFloat, rect: CGRect) -> CIImage? {
         guard let k = richKernel(kind) else { return nil }
@@ -172,7 +270,8 @@ enum TransitionRenderer {
         ]
         return k.apply(extent: rect, roiCallback: { _, _ in rect }, arguments: args)
     }
-
+    
+    // Регистрация всех шейдеров в richBody (чтобы ни один не пропадал)
     private static func richBody(_ kind: RichKind) -> String {
         switch kind {
         case .flowMorph: return richSrc_flowMorph
@@ -191,9 +290,15 @@ enum TransitionRenderer {
         case .aquaRefract: return richSrc_aquaRefract
         case .radialSweep: return richSrc_radialSweep
         case .bokehRack: return richSrc_bokehRack
+        case .hyperbolicLens: return richSrc_hyperbolicLens
+        case .kineticSlices: return richSrc_kineticSlices
+        case .organicVortex: return richSrc_organicVortex
+        case .directionalSlash: return richSrc_directionalSlash
+        case .kineticGlitchSlice: return richSrc_kineticGlitchSlice
+        case .radialZoomBlurWhip: return richSrc_radialZoomBlurWhip
         }
     }
-
+    
     private static let richPrelude = """
 float hash21(vec2 p) {
     vec3 p3 = fract(vec3(p.x, p.y, p.x) * 0.1031);
@@ -241,7 +346,7 @@ vec3 chanMask(float ch) {
     return vec3(1.0 - step(0.5, ch), step(0.5, ch) * (1.0 - step(1.5, ch)), step(1.5, ch));
 }
 """
-
+    
     private static let richSrc_flowMorph = """
 kernel vec4 flowMorph(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -261,7 +366,7 @@ kernel vec4 flowMorph(sampler A, sampler B, float e, vec2 size, vec2 org, float 
     return vec4(mix(cA, cB, m), 1.0);
 }
 """
-
+    
     private static let richSrc_chromaBarrel = """
 kernel vec4 chromaBarrel(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -293,7 +398,7 @@ kernel vec4 chromaBarrel(sampler A, sampler B, float e, vec2 size, vec2 org, flo
     return vec4(mix(cA, cB, m), 1.0);
 }
 """
-
+    
     private static let richSrc_whipPro = """
 kernel vec4 whipPro(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -320,7 +425,7 @@ kernel vec4 whipPro(sampler A, sampler B, float e, vec2 size, vec2 org, float p1
     return vec4(acc, 1.0);
 }
 """
-
+    
     private static let richSrc_orbitSpin = """
 kernel vec4 orbitSpin(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -347,7 +452,7 @@ kernel vec4 orbitSpin(sampler A, sampler B, float e, vec2 size, vec2 org, float 
     return vec4(mix(cA, cB, m), 1.0);
 }
 """
-
+    
     private static let richSrc_shardRefract = """
 kernel vec4 shardRefract(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -388,7 +493,7 @@ kernel vec4 shardRefract(sampler A, sampler B, float e, vec2 size, vec2 org, flo
     return vec4(col, 1.0);
 }
 """
-
+    
     private static let richSrc_shockwave = """
 kernel vec4 shockwave(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -410,7 +515,7 @@ kernel vec4 shockwave(sampler A, sampler B, float e, vec2 size, vec2 org, float 
     return vec4(col, 1.0);
 }
 """
-
+    
     private static let richSrc_smokeDissolve = """
 kernel vec4 smokeDissolve(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -429,7 +534,7 @@ kernel vec4 smokeDissolve(sampler A, sampler B, float e, vec2 size, vec2 org, fl
     return vec4(col, 1.0);
 }
 """
-
+    
     private static let richSrc_tileCascade = """
 kernel vec4 tileCascade(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -461,7 +566,7 @@ kernel vec4 tileCascade(sampler A, sampler B, float e, vec2 size, vec2 org, floa
     return vec4(col, 1.0);
 }
 """
-
+    
     private static let richSrc_lenticular = """
 kernel vec4 lenticular(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -486,7 +591,7 @@ kernel vec4 lenticular(sampler A, sampler B, float e, vec2 size, vec2 org, float
     return vec4(col, 1.0);
 }
 """
-
+    
     private static let richSrc_vortexPull = """
 kernel vec4 vortexPull(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -518,7 +623,7 @@ kernel vec4 vortexPull(sampler A, sampler B, float e, vec2 size, vec2 org, float
     return vec4(mix(cA, cB, m), 1.0);
 }
 """
-
+    
     private static let richSrc_anamorphicFlare = """
 kernel vec4 anamorphicFlare(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -542,7 +647,7 @@ kernel vec4 anamorphicFlare(sampler A, sampler B, float e, vec2 size, vec2 org, 
     return vec4(col, 1.0);
 }
 """
-
+    
     private static let richSrc_depthParallax = """
 kernel vec4 depthParallax(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -559,7 +664,7 @@ kernel vec4 depthParallax(sampler A, sampler B, float e, vec2 size, vec2 org, fl
     return vec4(mix(cA, cB, m), 1.0);
 }
 """
-
+    
     private static let richSrc_lightLeak = """
 kernel vec4 lightLeak(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -577,7 +682,7 @@ kernel vec4 lightLeak(sampler A, sampler B, float e, vec2 size, vec2 org, float 
     return vec4(col, 1.0);
 }
 """
-
+    
     private static let richSrc_aquaRefract = """
 kernel vec4 aquaRefract(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -595,7 +700,7 @@ kernel vec4 aquaRefract(sampler A, sampler B, float e, vec2 size, vec2 org, floa
     return vec4(col, 1.0);
 }
 """
-
+    
     private static let richSrc_radialSweep = """
 kernel vec4 radialSweep(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -615,7 +720,7 @@ kernel vec4 radialSweep(sampler A, sampler B, float e, vec2 size, vec2 org, floa
     return vec4(col, 1.0);
 }
 """
-
+    
     private static let richSrc_bokehRack = """
 kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
     vec2 uv = (destCoord() - org) / size;
@@ -645,9 +750,47 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
     return vec4(col, 1.0);
 }
 """
-
+    
+    private static let richSrc_kineticGlitchSlice = """
+        kernel vec4 kineticGlitchSlice(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
+            vec2 uv = (destCoord() - org) / size;
+            float s = sin(e * 3.14159265);
+            float sliceY = floor(uv.y * 18.0);
+            float n = fract(sin(sliceY * 12.9898) * 43758.5453);
+            float shift = (n - 0.5) * p1 * s;
+            vec2 uA = uv + vec2(shift, 0.0);
+            vec2 uB = uv - vec2(shift, 0.0);
+            vec3 cA = sample(A, samplerTransform(A, org + mir(uA) * size)).rgb;
+            vec3 cB = sample(B, samplerTransform(B, org + mir(uB) * size)).rgb;
+            float m = sstep(0.3, 0.7, e);
+            vec3 col = mix(cA, cB, m);
+            col += vec3(shift * 2.0 * s, -shift * s, shift * s);
+            return vec4(col, 1.0);
+        }
+        """
+    
+    private static let richSrc_radialZoomBlurWhip = """
+        kernel vec4 radialZoomBlurWhip(sampler A, sampler B, float e, vec2 size, vec2 org, float p1, float p2) {
+            vec2 uv = (destCoord() - org) / size;
+            vec2 p = uv - 0.5;
+            float r = length(p);
+            float s = sin(e * 3.14159265);
+            float blurAmount = s * p1 * 0.15;
+            vec3 acc = vec3(0.0);
+            for (float i = 0.0; i < 10.0; i += 1.0) {
+                float scale = 1.0 + (i / 9.0 - 0.5) * blurAmount;
+                vec2 coords = p * scale + 0.5;
+                vec3 c = mix(sample(A, samplerTransform(A, org + mir(coords) * size)).rgb,
+                             sample(B, samplerTransform(B, org + mir(coords) * size)).rgb, e);
+                acc += c;
+            }
+            return vec4(acc / 10.0, 1.0);
+        }
+        """
+    
+    
     // MARK: - Main Render Entry
-
+    
     static func render(id: Int, from: CIImage, to: CIImage, t: CGFloat, rect: CGRect) -> CIImage {
         guard let spec = TransitionCatalog.spec(id) else { return t < 0.5 ? from : to }
         let e = spec.ease.apply(t)
@@ -655,13 +798,13 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
         out = applyFx(spec.fx, out, t: t, rect: rect)
         return out.composited(over: black(rect)).cropped(to: rect)
     }
-
+    
     // MARK: - Helpers & Utilities
-
+    
     private static func black(_ r: CGRect) -> CIImage { CIImage(color: CIColor.black).cropped(to: r) }
     private static func solid(_ c: CIColor, _ r: CGRect) -> CIImage { CIImage(color: c).cropped(to: r) }
     private static func clamp01(_ x: CGFloat) -> CGFloat { max(0, min(1, x)) }
-
+    
     private static func opacity(_ image: CIImage, _ a: CGFloat) -> CIImage {
         let a = clamp01(a)
         guard a < 0.999 else { return image }
@@ -673,24 +816,24 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
         ])
     }
-
+    
     private static func crossfade(_ a: CIImage, _ b: CIImage, _ t: CGFloat) -> CIImage {
         opacity(b, t).composited(over: a)
     }
-
+    
     private static func move(_ img: CIImage, _ x: CGFloat, _ y: CGFloat) -> CIImage {
         img.transformed(by: CGAffineTransform(translationX: x, y: y))
     }
-
+    
     private static func scaledXY(_ img: CIImage, _ sx: CGFloat, _ sy: CGFloat, _ r: CGRect) -> CIImage {
         let t = CGAffineTransform(translationX: -r.midX, y: -r.midY)
             .concatenating(CGAffineTransform(scaleX: max(0.001, sx), y: max(0.001, sy)))
             .concatenating(CGAffineTransform(translationX: r.midX, y: r.midY))
         return img.transformed(by: t)
     }
-
+    
     private static func scaled(_ img: CIImage, _ s: CGFloat, _ r: CGRect) -> CIImage { scaledXY(img, s, s, r) }
-
+    
     private static func rotated(_ img: CIImage, angle: CGFloat, scale: CGFloat, _ r: CGRect) -> CIImage {
         let t = CGAffineTransform(translationX: -r.midX, y: -r.midY)
             .concatenating(CGAffineTransform(rotationAngle: angle))
@@ -698,38 +841,49 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             .concatenating(CGAffineTransform(translationX: r.midX, y: r.midY))
         return img.transformed(by: t)
     }
-
+    
     private static func ciFilter(_ name: String, _ image: CIImage, _ params: [String: Any]) -> CIImage? {
         guard let f = CIFilter(name: name) else { return nil }
         f.setValue(image, forKey: kCIInputImageKey)
         for (k, v) in params where f.inputKeys.contains(k) { f.setValue(v, forKey: k) }
         return f.outputImage
     }
-
+    
     private static func blurred(_ img: CIImage, sigma: CGFloat, _ r: CGRect) -> CIImage {
         guard sigma > 0.5 else { return img }
         return img.clampedToExtent().applyingGaussianBlur(sigma: Double(sigma)).cropped(to: r)
     }
-
+    
     private static func vec(_ p: CGPoint) -> CIVector { CIVector(x: p.x, y: p.y) }
-
+    
     // MARK: - Premium helpers
-
+    
+    // Умный заполненный фон: размывает кадр на всю площадь, чтобы не было черных рамок при вращении/зуме
+    private static func blurredBackground(_ img: CIImage, _ rect: CGRect) -> CIImage {
+        let bgBlur = blurred(img, sigma: min(rect.width, rect.height) * 0.08, rect)
+        return scaled(bgBlur, 1.25, rect).cropped(to: rect)
+    }
+    
+    private static func renderWithBlurredBg(_ foreground: CIImage, baseImg: CIImage, rect: CGRect) -> CIImage {
+        let bg = blurredBackground(baseImg, rect)
+        return foreground.composited(over: bg)
+    }
+    
     private static func smoothstep(_ a: CGFloat, _ b: CGFloat, _ x: CGFloat) -> CGFloat {
         let t = clamp01((x - a) / max(0.0001, b - a))
         return t * t * (3 - 2 * t)
     }
-
+    
     private static func cubicInOut(_ x: CGFloat) -> CGFloat {
         let v = clamp01(x)
         return v < 0.5 ? 4 * v * v * v : 1 - pow(-2 * v + 2, 3) / 2
     }
-
+    
     private static func evAdjust(_ img: CIImage, ev: CGFloat) -> CIImage {
         guard abs(ev) > 0.001 else { return img }
         return img.applyingFilter("CIExposureAdjust", parameters: ["inputEV": ev])
     }
-
+    
     /// Размытие в движении. Вызывать ДО сдвига изображения (иначе clampedToExtent растянет края).
     private static func motionBlurred(_ img: CIImage, radius: CGFloat, angle: CGFloat) -> CIImage {
         guard radius > 0.5 else { return img }
@@ -738,14 +892,14 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             .applyingFilter("CIMotionBlur", parameters: ["inputRadius": radius, "inputAngle": angle])
             .cropped(to: extent)
     }
-
+    
     /// Минимальный масштаб, при котором повёрнутый кадр полностью закрывает rect (без чёрных углов).
     private static func coverScale(angle: CGFloat, _ r: CGRect) -> CGFloat {
         let a = abs(angle)
         let ratio = max(r.width / max(1, r.height), r.height / max(1, r.width))
         return cos(a) + ratio * sin(a)
     }
-
+    
     private static func scaleMask(_ m: CIImage, _ k: CGFloat) -> CIImage {
         m.applyingFilter("CIColorMatrix", parameters: [
             "inputRVector": CIVector(x: k, y: 0, z: 0, w: 0),
@@ -755,12 +909,12 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
         ])
     }
-
+    
     /// Полоса между двумя масками (a - b).
     private static func maskBand(_ a: CIImage, minus b: CIImage, _ r: CGRect) -> CIImage {
         a.applyingFilter("CIDifferenceBlendMode", parameters: [kCIInputBackgroundImageKey: b]).cropped(to: r)
     }
-
+    
     private static func chromaSplit(_ img: CIImage, shift d: CGFloat, _ rect: CGRect) -> CIImage {
         func channel(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CIImage {
             img.applyingFilter("CIColorMatrix", parameters: [
@@ -777,9 +931,9 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
         let rg = green.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: red])
         return blue.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: rg]).cropped(to: rect)
     }
-
+    
     // MARK: - Masks & Fields
-
+    
     private static func threshold(_ g: CIImage, e: CGFloat, soft: CGFloat, _ r: CGRect) -> CIImage {
         let s = max(0.001, soft)
         let a = -1 / s
@@ -798,14 +952,14 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             ])
             .cropped(to: r)
     }
-
+    
     private static func revealWithMask(_ to: CIImage, over from: CIImage, mask: CIImage, _ r: CGRect) -> CIImage {
         to.applyingFilter("CIBlendWithMask", parameters: [
             kCIInputBackgroundImageKey: from,
             kCIInputMaskImageKey: mask
         ]).cropped(to: r)
     }
-
+    
     private static func linearField(angle: CGFloat, _ r: CGRect) -> CIImage? {
         guard let f = CIFilter(name: "CILinearGradient") else { return nil }
         let dx = cos(angle), dy = sin(angle)
@@ -816,7 +970,7 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
         f.setValue(CIColor.white, forKey: "inputColor1")
         return f.outputImage?.cropped(to: r)
     }
-
+    
     private static func radialField(center: CGPoint, radius: CGFloat, invert: Bool, _ r: CGRect) -> CIImage? {
         guard let f = CIFilter(name: "CIRadialGradient") else { return nil }
         f.setValue(vec(center), forKey: "inputCenter")
@@ -826,7 +980,7 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
         f.setValue(invert ? CIColor.black : CIColor.white, forKey: "inputColor1")
         return f.outputImage?.cropped(to: r)
     }
-
+    
     private static func stripeField(halfWidth: CGFloat, angle: CGFloat, _ r: CGRect) -> CIImage? {
         guard let f = CIFilter(name: "CIStripesGenerator") else { return nil }
         f.setValue(CIVector(x: r.midX, y: r.midY), forKey: "inputCenter")
@@ -843,7 +997,7 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
         }
         return img.cropped(to: r)
     }
-
+    
     private static func noiseField(grain: CGFloat, cloud: Bool, _ r: CGRect) -> CIImage? {
         guard let rg = CIFilter(name: "CIRandomGenerator")?.outputImage else { return nil }
         var g = rg.applyingFilter("CIColorMatrix", parameters: [
@@ -859,21 +1013,21 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
         }
         return g.cropped(to: r)
     }
-
+    
     // MARK: - Pipeline Renderer
-
+    
     private static func renderBase(_ base: Base, from: CIImage, to: CIImage, e: CGFloat, rect: CGRect) -> CIImage {
         let W = rect.width, H = rect.height
         let c = CGPoint(x: rect.midX, y: rect.midY)
         let ec = clamp01(e)
         let fallback = crossfade(from, to, ec)
-
+        
         switch base {
         case .dissolve: return fallback
         case .dip(let color):
             let bg = solid(color, rect)
             return ec < 0.5 ? opacity(from, 1 - 2 * ec).composited(over: bg)
-                            : opacity(to, 2 * ec - 1).composited(over: bg)
+            : opacity(to, 2 * ec - 1).composited(over: bg)
         case .push(let d):
             let v = d.vector
             return move(to, v.x * W * (e - 1), v.y * H * (e - 1))
@@ -1022,8 +1176,8 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
                 return out?.cropped(to: rect) ?? img
             }
             return crossfade(mo(from), mo(to), ec)
-
-        // Математические ядра
+            
+            // Математические ядра
         case .sineRipple(let freq, let amp):
             let strength = sin(ec * .pi) * amp
             let f = sineRippleKernel?.apply(extent: rect, roiCallback: { _, r in r }, arguments: [from, ec, freq, strength, c]) ?? from
@@ -1042,8 +1196,8 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             let amount = sin(ec * .pi) * gridSize * 3.0
             let pix = ciFilter("CIPixellate", from.clampedToExtent(), ["inputScale": max(1, amount), "inputCenter": vec(c)])?.cropped(to: rect) ?? from
             return crossfade(pix, to, ec)
-
-        // Ворпы
+            
+            // Ворпы
         case .liquidWarp(let freq, let amp):
             let strength = sin(ec * .pi) * amp
             let f = liquidWarpKernel?.apply(extent: rect, roiCallback: { _, r in r }, arguments: [from, ec, freq, strength, c]) ?? from
@@ -1062,8 +1216,8 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             let f = glassRefractionKernel?.apply(extent: rect, roiCallback: { _, r in r }, arguments: [from, ec, strength, c]) ?? from
             let tImg = glassRefractionKernel?.apply(extent: rect, roiCallback: { _, r in r }, arguments: [to, 1 - ec, strength, c]) ?? to
             return crossfade(f, tImg, ec)
-
-        // Новые современные кейсы
+            
+            // Новые современные кейсы
         case .whipPan(let d, _):
             let v = d.vector
             let slideFrom = move(from, v.x * W * ec, v.y * H * ec)
@@ -1156,11 +1310,11 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             let pFrom = ciFilter("CIPinchDistortion", from.clampedToExtent(), ["inputCenter": vec(c), "inputRadius": R, "inputScale": gravity * ec])?.cropped(to: rect) ?? from
             let pTo = ciFilter("CIPinchDistortion", to.clampedToExtent(), ["inputCenter": vec(c), "inputRadius": R, "inputScale": gravity * (1 - ec)])?.cropped(to: rect) ?? to
             return crossfade(pFrom, pTo, ec)
-
-        // =================================================================
-        // PREMIUM-КОЛЛЕКЦИЯ
-        // =================================================================
-
+            
+            // =================================================================
+            // PREMIUM-КОЛЛЕКЦИЯ
+            // =================================================================
+            
         case .glide(let d, let parallax, let blurK):
             let v = d.vector
             let s = sin(ec * .pi)
@@ -1171,7 +1325,7 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             let mf = move(bf, v.x * W * ec * parallax, v.y * H * ec * parallax)
             let mt = move(bt, v.x * W * (ec - 1), v.y * H * (ec - 1))
             return mt.composited(over: mf)
-
+            
         case .dolly(let inward, let depth):
             let mix = smoothstep(0.25, 0.75, ec)
             let settle = scaled(to, 1 + depth * 0.6 * (1 - ec), rect)
@@ -1181,12 +1335,12 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
                 let top = opacity(scaled(from, 1 - depth * 0.5 * ec, rect), 1 - mix)
                 return top.composited(over: settle)
             }
-
+            
         case .blurDissolve(let k):
             let r = sin(ec * .pi) * k * min(W, H) * 0.05
             let mix = smoothstep(0.2, 0.8, ec)
             return crossfade(blurred(from, sigma: r, rect), blurred(to, sigma: r, rect), mix)
-
+            
         case .stretchSwap(let vertical, let amount):
             let mix = smoothstep(0.35, 0.65, ec)
             let kf = 1 + amount * ec * ec
@@ -1194,7 +1348,7 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             let f = vertical ? scaledXY(from, 1, kf, rect) : scaledXY(from, kf, 1, rect)
             let tImg = vertical ? scaledXY(to, 1, kt, rect) : scaledXY(to, kt, 1, rect)
             return crossfade(f, tImg, mix)
-
+            
         case .driftRotate(let angle, let cw):
             let sign: CGFloat = cw ? -1 : 1
             let a1 = sign * angle * ec
@@ -1202,25 +1356,25 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             let f = rotated(from, angle: a1, scale: coverScale(angle: a1, rect), rect)
             let tImg = rotated(to, angle: a2, scale: coverScale(angle: a2, rect), rect)
             return crossfade(f, tImg, smoothstep(0.25, 0.75, ec))
-
+            
         case .cardStack(let d, let depth):
             let v = d.vector
             let back = scaled(evAdjust(from, ev: -1.4 * ec), 1 - depth * ec, rect)
             let front = move(to, v.x * W * (ec - 1), v.y * H * (ec - 1))
             return front.composited(over: back)
-
+            
         case .cardPeel(let d, let depth):
             let v = d.vector
             let under = scaled(evAdjust(to, ev: -1.4 * (1 - ec)), 1 - depth * (1 - ec), rect)
             let top = move(from, v.x * W * ec, v.y * H * ec)
             return top.composited(over: under)
-
+            
         case .featherWipe(let angle, let soft, let blurK):
             guard let g = linearField(angle: angle, rect) else { return fallback }
             let mask = threshold(g, e: ec, soft: soft, rect)
             let r = sin(ec * .pi) * blurK * min(W, H) * 0.03
             return revealWithMask(blurred(to, sigma: r, rect), over: blurred(from, sigma: r, rect), mask: mask, rect)
-
+            
         case .glassSweep(let angle, let band, let blurK):
             guard let g = linearField(angle: angle, rect) else { return fallback }
             let sf: CGFloat = 0.12
@@ -1230,7 +1384,7 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             let lo = threshold(g, e: pr - band * 0.5, soft: sf, rect)
             let frosted = evAdjust(blurred(revealed, sigma: min(W, H) * 0.035 * blurK, rect), ev: 0.15)
             return revealWithMask(frosted, over: revealed, mask: maskBand(hi, minus: lo, rect), rect)
-
+            
         case .lineWipe(let angle, let width):
             guard let g = linearField(angle: angle, rect) else { return fallback }
             let sf: CGFloat = 0.006
@@ -1242,7 +1396,7 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             }
             let glow = revealWithMask(evAdjust(wiped, ev: 0.8), over: wiped, mask: scaleMask(band(width * 10), 0.55), rect)
             return revealWithMask(solid(CIColor(red: 1, green: 1, blue: 1), rect), over: glow, mask: scaleMask(band(width), 0.9), rect)
-
+            
         case .staggerPanels(let count, let vertical, let reverse):
             var acc = from
             let n = CGFloat(max(1, count))
@@ -1267,7 +1421,7 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
                 acc = move(to.cropped(to: strip), dx, dy).composited(over: acc)
             }
             return acc
-
+            
         case .dipHold(let color, let hold):
             let bg = solid(color, rect)
             let a = 0.5 - hold / 2, b = 0.5 + hold / 2
@@ -1277,25 +1431,289 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
                 return opacity(to, smoothstep(b, 1, ec)).composited(over: bg)
             }
             return bg
-
+            
         case .rich(let kind, let a, let b):
             return renderRich(kind, from: from, to: to, e: ec, a: a, b: b, rect: rect)
-                ?? crossfade(from, to, smoothstep(0.2, 0.8, ec))
+            ?? crossfade(from, to, smoothstep(0.2, 0.8, ec))
+            
+        case .tiktokPunchZoom(let str):
+            let progress = sin(ec * .pi)
+            let scaleFrom = 1.0 + str * ec * ec
+            let scaleTo = max(0.1, 1.0 + str * (1.0 - ec) * (1.0 - ec))
+            let f = scaled(from, scaleFrom, rect)
+            let tImg = scaled(to, scaleTo, rect)
+            let shift = progress * W * 0.08
+            let shiftedFrom = move(f, shift, 0)
+            let mixed = crossfade(shiftedFrom, tImg, smoothstep(0.3, 0.7, ec))
+            // Подкладываем размытый фон вместо черных рамок (берем текущий активный кадр как базу)
+            let baseFrame = ec < 0.5 ? from : to
+            return renderWithBlurredBg(mixed, baseImg: baseFrame, rect: rect)
+            
+        case .liquidWarpMorph(let freq, let amp):
+            let wave = sin(ec * .pi) * amp
+            let f = liquidWarpKernel?.apply(extent: rect, roiCallback: { _, r in r }, arguments: [from, ec, freq, wave, c]) ?? from
+            let tImg = liquidWarpKernel?.apply(extent: rect, roiCallback: { _, r in r }, arguments: [to, 1 - ec, freq, wave, c]) ?? to
+            let blurSigma = sin(ec * .pi) * 15.0
+            let blurredMix = crossfade(blurred(f, sigma: blurSigma, rect), blurred(tImg, sigma: blurSigma, rect), ec)
+            let mixed = crossfade(blurredMix, crossfade(f, tImg, ec), smoothstep(0.4, 0.6, ec))
+            return renderWithBlurredBg(mixed, baseImg: from, rect: rect)
+            
+        case .spinBounce(let turns):
+            let bounceEase = Ease.back.apply(ec)
+            let angle = bounceEase * turns * 2 * .pi
+            let scaleFactor = 1.0 + 0.3 * sin(ec * .pi)
+            let f = rotated(from, angle: angle, scale: scaleFactor, rect)
+            let tImg = rotated(to, angle: angle - turns * 2 * .pi, scale: scaleFactor, rect)
+            let mixed = crossfade(f, tImg, ec)
+            // Для вращения фоновый подслой обязателен, чтобы закрыть углы
+            return renderWithBlurredBg(mixed, baseImg: ec < 0.5 ? from : to, rect: rect)
+            
+        case .cinematicLightSweep(let intensity):
+            let progress = smoothstep(0.1, 0.9, ec)
+            let fZoom = scaled(evAdjust(from, ev: -1.2 * ec), 1.0 + 0.15 * ec, rect)
+            let tZoom = scaled(to, 1.0 + 0.15 * (1.0 - ec), rect)
+            let mixed = crossfade(fZoom, tZoom, progress)
+            let lightFlash = opacity(solid(CIColor(red: 1, green: 0.95, blue: 0.85), rect), sin(ec * .pi) * 0.35 * intensity)
+            let lit = mixed.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: lightFlash]).cropped(to: rect)
+            return renderWithBlurredBg(lit, baseImg: from, rect: rect)
+            
+        case .shakeWithGoldFlash(let intensity):
+            // Тряска с резким смещением и кинематографичным дрожанием
+            let shakeX = sin(ec * 45.0) * intensity * 15.0 * sin(ec * .pi)
+            let shakeY = cos(ec * 35.0) * intensity * 10.0 * sin(ec * .pi)
+            let shifted = move(crossfade(from, to, ec), shakeX, shakeY)
+            return renderWithBlurredBg(shifted, baseImg: ec < 0.5 ? from : to, rect: rect)
+            
+        case .pointBlurStrobe(let strength):
+            // Точечное размытие (Zoom Blur из центра) с покадровым импульсом света
+            let center = CGPoint(x: rect.midX, y: rect.midY)
+            let blurAmount = sin(ec * .pi) * strength * 50.0
+            let f = ciFilter("CIZoomBlur", from.clampedToExtent(), ["inputCenter": vec(center), "inputAmount": blurAmount])?.cropped(to: rect) ?? from
+            let tImg = ciFilter("CIZoomBlur", to.clampedToExtent(), ["inputCenter": vec(center), "inputAmount": blurAmount])?.cropped(to: rect) ?? to
+            let mixed = crossfade(f, tImg, ec)
+            return renderWithBlurredBg(mixed, baseImg: from, rect: rect)
+            
+        case .foggyVibrate(let amp):
+            // Вибрирующий переход с эффектом мягкого тумана/дымки
+            let wave = sin(ec * 20.0) * amp * sin(ec * .pi)
+            let f = move(blurred(from, sigma: sin(ec * .pi) * 10, rect), wave, 0)
+            let tImg = move(blurred(to, sigma: sin(ec * .pi) * 10, rect), -wave, 0)
+            let mixed = crossfade(f, tImg, ec)
+            return scaled(mixed.clampedToExtent(), 1.15, rect).cropped(to: rect)
+            
+        case .barrelDrift(let intensity):
+            let progress = sin(ec * .pi)
+            let baseScale: CGFloat = 1.25
+            let scaleFrom = baseScale + progress * 0.15 * intensity
+            let scaleTo = baseScale + (1.0 - progress) * 0.15 * intensity
+            let f = scaled(from.clampedToExtent(), scaleFrom, rect).cropped(to: rect)
+            let tImg = scaled(to.clampedToExtent(), scaleTo, rect).cropped(to: rect)
+            return crossfade(f, tImg, ec)
+            
+        case .multiFrameBlurStagger(let count):
+            let n = CGFloat(max(2, count))
+            let progress = smoothstep(0.15, 0.85, ec)
+            // Плавный гармоничный зум вместо резкого статика
+            let scale = 1.15 + sin(ec * .pi) * 0.2
+            let scaledFrom = scaled(from.clampedToExtent(), scale, rect).cropped(to: rect)
+            let scaledTo = scaled(to.clampedToExtent(), scale, rect).cropped(to: rect)
+            var acc = scaledFrom
+            let width = rect.width
+            for k in 0..<Int(n) {
+                let factor = CGFloat(k) / max(1.0, n - 1)
+                let subProgress = clamp01((ec - factor * 0.25) / 0.75)
+                if subProgress <= 0 { continue }
+                let direction: CGFloat = (k % 2 == 0) ? 1.0 : -1.0
+                let dx = (1.0 - subProgress) * width * direction * 0.35
+                let strip = blurred(scaledTo.clampedToExtent(), sigma: (1.0 - subProgress) * 12.0, rect)
+                let movedStrip = move(strip.clampedToExtent(), dx, 0).cropped(to: rect)
+                acc = crossfade(acc, movedStrip, subProgress)
+            }
+            return crossfade(scaledFrom, acc, progress).clampedToExtent().cropped(to: rect)
+            
+        case .handheldOrganicDrift(let amplitude):
+            let progress = sin(ec * .pi)
+            let shakeX = sin(ec * 14.0) * amplitude * 12.0 * progress
+            let shakeY = cos(ec * 16.0) * amplitude * 8.0 * progress
+            let rot = sin(ec * 9.0) * 0.015 * amplitude * progress
+            // Плавное увеличение масштаба для покрытия краев при тряске и вращении
+            let scale = 1.2 + progress * 0.15
+            let f = rotated(scaled(from.clampedToExtent(), scale, rect), angle: rot, scale: 1.0, rect).cropped(to: rect)
+            let tImg = rotated(scaled(to.clampedToExtent(), scale, rect), angle: -rot, scale: 1.0, rect).cropped(to: rect)
+            let mixed = crossfade(f, tImg, ec)
+            // .clampedToExtent() перед move() защищает от появления черных полос по сторонам при тряске
+            return move(mixed.clampedToExtent(), shakeX, shakeY).cropped(to: rect)
+            
+        case .rackFocusMotionSlash(let strength):
+            let progress = sin(ec * .pi)
+            let blurRadius = progress * strength * min(W, H) * 0.065
+            let zoomFrom = 1.0 + 0.35 * ec * ec
+            let zoomTo = 1.0 + 0.35 * (1.0 - ec) * (1.0 - ec)
+            let fZoomed = scaled(from.clampedToExtent(), zoomFrom, rect).cropped(to: rect)
+            let tZoomed = scaled(to.clampedToExtent(), zoomTo, rect).cropped(to: rect)
+            let f = motionBlurred(fZoomed, radius: blurRadius, angle: 0.35)
+            let tImg = motionBlurred(tZoomed, radius: blurRadius, angle: 0.35)
+            return crossfade(f, tImg, smoothstep(0.25, 0.75, ec))
+            
+        case .lightFlashOverexposure:
+            // ЧИСТЫЙ СВЕТОВОЙ УДАР БЕЗ СКАЧКОВ И МАСШТАБИРОВАНИЯ:
+            // Кадры не дергаются и не летают, они стоят на месте. Меняется только экспозиция (свет).
+            let progress = sin(ec * .pi)
+            let flashEv = progress * 4.0 // Плавный пик яркости в середине
+            
+            let f = evAdjust(from.clampedToExtent(), ev: flashEv).cropped(to: rect)
+            let tImg = evAdjust(to.clampedToExtent(), ev: flashEv).cropped(to: rect)
+            
+            // Обычный кроссфейд под бешеным светом — идеально ровно по центру смены кадров
+            return crossfade(f, tImg, ec)
+            
+        case .laserLightSweep:
+            let scale: CGFloat = 1.3
+            let f = scaled(from.clampedToExtent(), scale, rect).cropped(to: rect)
+            let tImg = scaled(to.clampedToExtent(), scale, rect).cropped(to: rect)
+            
+            // Динамическое размытие движения (motion blur) на видео во время пролета луча для единого потока
+            let blurRad = sin(ec * .pi) * 20.0
+            let bf = motionBlurred(f, radius: blurRad, angle: 0.0)
+            let bt = motionBlurred(tImg, radius: blurRad, angle: 0.0)
+            let mixed = crossfade(bf, bt, smoothstep(0.2, 0.8, ec))
+            
+            // Позиция лазерного луча по оси X
+            let lineX = ec * (W * 1.6) - (W * 0.3)
+            let lineRect = CGRect(x: lineX, y: rect.minY, width: W * 0.05, height: H)
+            let rawLine = solid(CIColor(red: 1.0, green: 0.95, blue: 0.88, alpha: 1.0), lineRect)
+            
+            // ГЛУБОКОЕ РАЗМЫТИЕ БЛИКА: превращаем жесткую линию в мягкий, объемный, неоновый свет
+            let glowingLaser = blurred(rawLine, sigma: 40.0, rect)
+            
+            // Накладываем размытый световой меч поверх видео с аддитивным свечением (Addition)
+            let lit = mixed.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: glowingLaser]).cropped(to: rect)
+            return scaled(lit.clampedToExtent(), 1.02, rect).cropped(to: rect)
+            
+        case .organicLightLeak:
+            let progress = sin(ec * .pi)
+            let scale: CGFloat = 1.32
+            
+            // Динамический микро-зум и легкое дыхание видео во время утечки света
+            let dynamicScale = scale + progress * 0.04
+            let f = scaled(from.clampedToExtent(), dynamicScale, rect).cropped(to: rect)
+            let tImg = scaled(to.clampedToExtent(), dynamicScale, rect).cropped(to: rect)
+            
+            // Плавное размытие движения для слитности потока
+            let blurRad = progress * 14.0
+            let bf = motionBlurred(f, radius: blurRad, angle: 0.2)
+            let bt = motionBlurred(tImg, radius: blurRad, angle: 0.2)
+            let mixed = crossfade(bf, bt, smoothstep(0.2, 0.8, ec))
+            
+            // 1. Основной мощный поток тёплого света (оранжево-золотой засвет)
+            let primaryLeakColor = CIColor(red: 1.0, green: 0.5, blue: 0.22, alpha: 1.0)
+            let primaryRect = CGRect(x: (ec * 1.6 - 0.8) * W, y: 0, width: W * 0.85, height: H)
+            let primaryBlob = opacity(solid(primaryLeakColor, primaryRect), progress * 0.7)
+            let blurredBlob = blurred(primaryBlob, sigma: 55.0, rect)
+            
+            // 2. Хаотичные динамичные микро-блики (растворяющиеся световые точки того же цвета)
+            let particleX1 = (sin(ec * 12.0) * 0.3 + 0.5) * W
+            let particleY1 = (cos(ec * 9.0) * 0.4 + 0.5) * H
+            let particleRect1 = CGRect(x: particleX1 - W * 0.15, y: particleY1 - H * 0.15, width: W * 0.3, height: H * 0.3)
+            
+            let particleX2 = (cos(ec * 15.0) * 0.35 + 0.4) * W
+            let particleY2 = (sin(ec * 11.0) * 0.35 + 0.6) * H
+            let particleRect2 = CGRect(x: particleX2 - W * 0.1, y: particleY2 - H * 0.1, width: W * 0.2, height: H * 0.2)
+            
+            let accentColor = CIColor(red: 1.0, green: 0.75, blue: 0.4, alpha: 1.0)
+            let spark1 = opacity(solid(accentColor, particleRect1), progress * progress * 0.85)
+            let spark2 = opacity(solid(accentColor, particleRect2), progress * (1.0 - ec) * 1.5)
+            
+            // Глубокое размытие микро-бликов в мягкое органическое боке
+            let glowingSparks = blurred(spark1.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: spark2]).cropped(to: rect), sigma: 35.0, rect)
+            
+            // Объединяем основной засвет и хаотичные искры в единый световой слой
+            let totalLight = blurredBlob.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: glowingSparks]).cropped(to: rect)
+            
+            // Накладываем всю эту световую мафию на видео через режим Screen (чистое пронзительное свечение без грязи)
+            let lit = mixed.applyingFilter("CIScreenBlendMode", parameters: [kCIInputBackgroundImageKey: totalLight]).cropped(to: rect)
+            return scaled(lit.clampedToExtent(), 1.01, rect).cropped(to: rect)
+            
+        case .neonRgbSplit:
+            let progress = sin(ec * .pi)
+            let scale: CGFloat = 1.32
+            let shift = progress * W * 0.075
+            let f = scaled(from.clampedToExtent(), scale, rect).cropped(to: rect)
+            let tImg = scaled(to.clampedToExtent(), scale, rect).cropped(to: rect)
+            let base = crossfade(f, tImg, ec)
+            // Разделение на каналы с цифровым неоновым сдвигом внутри кадра
+            return chromaSplit(base, shift: shift, rect)
+            
+        case .neonBokehLeak:
+            let progress = sin(ec * .pi)
+            
+            // Плавный масштаб: стартует с 1.0 (без скачка), на пике мягко доходит до 1.35 и плавно возвращается в 1.0
+            let smoothZoom = 1.0 + progress * 0.35
+            
+            // Плавная тряска, завязанная на синус (начинается с нуля и гаснет к концу)
+            let shakeX = sin(ec * 35.0) * progress * 16.0
+            let shakeY = cos(ec * 28.0) * progress * 10.0
+            
+            let f = move(scaled(from.clampedToExtent(), smoothZoom, rect), shakeX, shakeY).cropped(to: rect)
+            let tImg = move(scaled(to.clampedToExtent(), smoothZoom, rect), -shakeX, -shakeY).cropped(to: rect)
+            
+            // Размытие движения (motion blur) тоже плавное без резких обрывов
+            let blurRad = progress * 22.0
+            let bf = motionBlurred(f, radius: blurRad, angle: 0.3)
+            let bt = motionBlurred(tImg, radius: blurRad, angle: 0.3)
+            let mixed = crossfade(bf, bt, smoothstep(0.2, 0.8, ec))
+            
+            // Функция генерации круглых боке-сфер
+            func warmCircle(center: CGPoint, radius: CGFloat, color: CIColor, alpha: CGFloat) -> CIImage {
+                guard alpha > 0.001, let filt = CIFilter(name: "CIRadialGradient") else { return black(rect) }
+                let premul = CIColor(red: color.red * alpha, green: color.green * alpha, blue: color.blue * alpha, alpha: 1.0)
+                filt.setValue(vec(center), forKey: "inputCenter")
+                filt.setValue(radius * 0.15, forKey: "inputRadius0")
+                filt.setValue(radius, forKey: "inputRadius1")
+                filt.setValue(premul, forKey: "inputColor0")
+                filt.setValue(CIColor(red: 0, green: 0, blue: 0, alpha: 1), forKey: "inputColor1")
+                return filt.outputImage?.cropped(to: rect) ?? black(rect)
+            }
+            
+            // Теплая анаморфная палитра (золото, насыщенный оранжевый, закатный персик)
+            let colGold = CIColor(red: 1.0, green: 0.82, blue: 0.45)
+            let colOrange = CIColor(red: 1.0, green: 0.48, blue: 0.15)
+            let colPeach = CIColor(red: 1.0, green: 0.35, blue: 0.45)
+            
+            let maxDim = max(W, H)
+            
+            // Орбиты и хаотичное движение круглых сфер
+            let cMain = CGPoint(x: (ec * 1.6 - 0.3) * W, y: H * (0.5 + 0.15 * sin(ec * 6.0)))
+            let orbMain = warmCircle(center: cMain, radius: maxDim * 0.6, color: colOrange, alpha: progress * 0.75)
+            
+            let c1 = CGPoint(x: (0.3 + 0.4 * sin(ec * 12.0)) * W, y: (0.35 + 0.3 * cos(ec * 10.0)) * H)
+            let orb1 = warmCircle(center: c1, radius: maxDim * 0.25, color: colGold, alpha: progress * progress * 0.9)
+            
+            let c2 = CGPoint(x: (0.7 - 0.4 * cos(ec * 14.0)) * W, y: (0.65 - 0.3 * sin(ec * 11.0)) * H)
+            let orb2 = warmCircle(center: c2, radius: maxDim * 0.18, color: colPeach, alpha: progress * (1.0 - ec * 0.4) * 0.85)
+            
+            // Склеиваем кружочки и размываем в мягкое органическое боке
+            let sum1 = orbMain.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: orb1]).cropped(to: rect)
+            let rawOrbs = sum1.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: orb2]).cropped(to: rect)
+            let softOrbs = blurred(rawOrbs, sigma: 28.0, rect)
+            
+            // Накладываем через Screen поверх динамичного кадра
+            let lit = mixed.applyingFilter("CIScreenBlendMode", parameters: [kCIInputBackgroundImageKey: softOrbs]).cropped(to: rect)
+            return lit.cropped(to: rect)
         }
     }
-
     // MARK: - Post FX Engine
-
+    
     private static func applyFx(_ fx: Fx, _ img: CIImage, t: CGFloat, rect: CGRect) -> CIImage {
         let W = rect.width, H = rect.height
         let s = sin(clamp01(t) * .pi)
         guard s > 0.001 else { return img }
-
+        
         func addColor(_ c: CIColor, _ amount: CGFloat) -> CIImage {
             let overlay = solid(CIColor(red: c.red * amount, green: c.green * amount, blue: c.blue * amount, alpha: 1), rect)
             return overlay.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: img]).cropped(to: rect)
         }
-
+        
         switch fx {
         case .none: return img
         case .blur: return blurred(img, sigma: s * min(W, H) * 0.035, rect)
@@ -1357,8 +1775,8 @@ kernel vec4 bokehRack(sampler A, sampler B, float e, vec2 size, vec2 org, float 
             ])?.cropped(to: rect) ?? img
         case .tilt:
             return rotated(img, angle: s * 0.18, scale: 1 + 0.2 * s, rect)
-
-        // Premium-эффекты: деликатные, без кислотных цветов
+            
+            // Premium-эффекты: деликатные, без кислотных цветов
         case .softBlur:
             return blurred(img, sigma: s * min(W, H) * 0.018, rect)
         case .zoomBlurSoft:

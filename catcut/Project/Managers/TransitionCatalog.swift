@@ -208,6 +208,7 @@ enum MosaicKind { case pixel, hex, crystal }
 enum RichKind: Hashable {
     case flowMorph, chromaBarrel, whipPro, orbitSpin, shardRefract, shockwave, smokeDissolve, tileCascade
     case lenticular, vortexPull, anamorphicFlare, depthParallax, lightLeak, aquaRefract, radialSweep, bokehRack
+    case hyperbolicLens, kineticSlices, organicVortex, directionalSlash, kineticGlitchSlice, radialZoomBlurWhip
 }
 
 enum Base {
@@ -276,6 +277,24 @@ enum Base {
     case dipHold(CIColor, hold: CGFloat)
 
     case rich(RichKind, a: CGFloat, b: CGFloat)
+    
+    // Новые трендовые кейсы для New2
+    case tiktokPunchZoom(strength: CGFloat)
+    case liquidWarpMorph(frequency: CGFloat, amplitude: CGFloat)
+    case spinBounce(turns: CGFloat)
+    case cinematicLightSweep(intensity: CGFloat)
+    case shakeWithGoldFlash(intensity: CGFloat) // Тряска со вспышками
+    case pointBlurStrobe(strength: CGFloat)     // Точечное размытие + покадровая вспышка
+    case foggyVibrate(amplitude: CGFloat)       // Вибрирующий с туманом
+    case barrelDrift(intensity: CGFloat)
+    case multiFrameBlurStagger(count: Int)
+    case handheldOrganicDrift(amplitude: CGFloat)
+    case rackFocusMotionSlash(strength: CGFloat)
+    case lightFlashOverexposure
+    case laserLightSweep
+    case organicLightLeak
+    case neonRgbSplit
+    case neonBokehLeak
 }
 
 struct TransitionSpec {
@@ -467,29 +486,39 @@ enum TransitionCatalog {
         // =====================================================================
         // 13. NEW2 — СОВРЕМЕННЫЕ ТРЕНДОВЫЕ ПЕРЕХОДЫ ПО ИДЕЯМ ВИКИ
         // =====================================================================
-        add("Динамичная тряска с наездом", .velocityZoom(inward: true, ramp: 2.2), .new2, fx: .shake, ease: .snap)
-        add("Мерцающий сбой", .cyberStrobeQuantize(bands: 14), .new2, fx: .cyberpunk, ease: .snap)
-        add("Динамичная чёрная вспышка", .dipHold(deepBlack, hold: 0.06), .new2, fx: .flash, ease: .snap)
-        add("Динамичная белая вспышка", .dipHold(pureWhite, hold: 0.06), .new2, fx: .flash, ease: .snap)
+        
+        add("Чёрная вспышка-взрыв", .dipHold(deepBlack, hold: 0.04), .new2, fx: .flash, ease: .snap)
+        add("Белая вспышка-взрыв", .dipHold(pureWhite, hold: 0.04), .new2, fx: .flash, ease: .snap)
         add("Затухание с размытием", .blurDissolve(strength: 1.8), .new2, fx: .softBlur, ease: .silk)
-        add("Извлечение кадра", .dolly(inward: false, depth: 0.55), .new2, fx: .zoomBlur, ease: .expoFast)
-        add("Вращение с дрожанием", .spin(cw: true, angle: 1.5 * .pi), .new2, fx: .shake, ease: .back)
-        add("Отскок вправо", .bounceSnap(dir: .right), .new2, fx: .zoomBlur, ease: .bounce)
-        add("Отскок влево", .bounceSnap(dir: .left), .new2, fx: .zoomBlur, ease: .bounce)
-        add("Вибрирующий сдвиг", .warpSlide(dir: .right, elasticity: 2.2), .new2, fx: .dualAberration, ease: .elastic)
-        add("Тряска со вспышками", .dissolve, .new2, fx: .goldFlash, ease: .snap)
-        add("Сдвиг с шлейфом вправо", .whipPan(dir: .right, blurStrength: 1.6), .new2, fx: .rgb, ease: .bezierOut)
-        add("Сдвиг с шлейфом влево", .whipPan(dir: .left, blurStrength: 1.6), .new2, fx: .rgb, ease: .bezierOut)
-        add("Резкий размытый пролёт", .whipPan(dir: .right, blurStrength: 2.4), .new2, fx: .directionalBlur, ease: .snap)
-        add("Кино-камера с тряской", .glide(dir: .right, parallax: 0.6, blur: 2.2), .new2, fx: .shake, ease: .cinematic)
-        add("Точечное размытие", .crossZoomSpeedRamp, .new2, fx: .zoomBlur, ease: .expoFast)
-        add("Мигающий переход", .dissolve, .new2, fx: .flash, ease: .snap)
-        add("Кино-переход с туманом", .dolly(inward: true, depth: 0.45), .new2, fx: .bloom, ease: .cinematic)
-        add("Эффект киноплёнки", .noise(grain: 3.5, cloud: false, soft: 0.2), .new2, fx: .filmBurn, ease: .linear)
-        add("Прожекторный переход", .iris(inward: false, scaleX: 1, soft: 0.12, cx: 0.5, cy: 0.5), .new2, fx: .neonFlare, ease: .expoFast)
-        add("Мгновенный скачок", .zoom(inward: true, strength: 0.95), .new2, fx: .chromatic, ease: .snap)
-        add("Искажение с тряской", .liquidWarp(frequency: 0.08, amplitude: 45), .new2, fx: .shake, ease: .elastic)
-
+        
+        add("Тикток-удар с зумом", .tiktokPunchZoom(strength: 1.8), .new2, fx: .rgb, ease: .expoFast)
+        add("Жидкий морф-перелив", .liquidWarpMorph(frequency: 0.06, amplitude: 40), .new2, fx: .zoomBlurSoft, ease: .silk)
+        add("Вращение с отскоком", .spinBounce(turns: 1.0), .new2, fx: .shake, ease: .back)
+        add("Кино-пролёт со светом", .cinematicLightSweep(intensity: 1.5), .new2, fx: .bloom, ease: .cinematic)
+        
+        add("Тряска со вспышками", .shakeWithGoldFlash(intensity: 2.0), .new2, fx: .goldFlash, ease: .snap)
+        add("Точечный зум-строб", .pointBlurStrobe(strength: 2.2), .new2, fx: .flash, ease: .expoFast)
+        add("Вибрирующий туман", .foggyVibrate(amplitude: 35), .new2, fx: .softBlur, ease: .elastic)
+        
+        // 4 любимых перехода Вики (Swift-версии с внутренним зумом без рамок):
+        add("Объёмный дрифт линзы", .barrelDrift(intensity: 1.5), .new2, fx: .zoomBlurSoft, ease: .silk)
+        add("Шёлковый сдвиг слоев", .multiFrameBlurStagger(count: 4), .new2, fx: .none, ease: .bezierStd)
+        add("Живая камера", .handheldOrganicDrift(amplitude: 1.2), .new2, fx: .none, ease: .cinematic)
+        add("Резкий фокусный пролёт", .rackFocusMotionSlash(strength: 2.0), .new2, fx: .none, ease: .expoFast)
+        
+        // 4 новых уникальных GPU-ядра на Metal (твои функции):
+        add("Гиперболическая линза", .rich(.hyperbolicLens, a: 1.2, b: 0.8), .new2, fx: .none, ease: .bezierStd)
+        add("Кинетичные слайсы", .rich(.kineticSlices, a: 1.5, b: 1.0), .new2, fx: .none, ease: .expoFast)
+        add("Органический вихрь", .rich(.organicVortex, a: 2.2, b: 0.6), .new2, fx: .none, ease: .silk)
+        add("Скоростной слэш", .rich(.directionalSlash, a: 1.8, b: 1.2), .new2, fx: .none, ease: .bezierOut)
+        
+        // 4 световых тренда:
+        add("Световой удар", .lightFlashOverexposure, .new2, fx: .none, ease: .snap)
+        add("Лазерный световой меч", .laserLightSweep, .new2, fx: .none, ease: .expoFast)
+        add("Утечка тёплого света", .organicLightLeak, .new2, fx: .none, ease: .silk)
+        add("Неоновый RGB-сплит", .neonRgbSplit, .new2, fx: .none, ease: .bezierOut)
+        add("Неоновое боке-перелив", .neonBokehLeak, .new2, fx: .none, ease: .silk)
+        
         return list
     }
 }
