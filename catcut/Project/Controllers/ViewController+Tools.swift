@@ -44,7 +44,6 @@ extension ViewController {
             reloadTimeline()
             textTab = .text
             openPanel(.text)
-            if texts.isEmpty { presentTextInput(editing: nil) }
         case .audio:
             guard requireClips() else { return }
             focusLane = .audio

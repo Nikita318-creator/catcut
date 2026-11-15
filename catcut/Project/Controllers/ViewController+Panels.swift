@@ -243,6 +243,7 @@ extension ViewController {
         case .filter?: applyFilterToAll()
         case .adjust?: applyAdjustToAll()
         case .effects?: applyEffectsToAll()
+        case .text?: applyTextStyleToAll()
         default: break
         }
     }

@@ -30,7 +30,7 @@ extension ViewController {
         var items: [PanelItem] = []
         var sel: Int?
         var cfg: SliderConfig?
-
+        
         switch textTab {
         case .text:
             items = [
@@ -45,22 +45,22 @@ extension ViewController {
                     String(format: "%.0f%%", Double($0) / 0.3 * 100)
                 }
             }
-
+            
         case .styles:
             for (i, p) in TextPresets.all.enumerated() {
                 items.append(PanelItem(title: p.title, image: textSample("preset\(i)") { p.apply(&$0) }, fit: true))
             }
-
+            
         case .font:
             for (i, f) in TextFonts.all.enumerated() {
                 items.append(PanelItem(title: f.title, image: textSample("font\(i)") { $0.fontIndex = i }, fit: true))
             }
             sel = t?.fontIndex
-
+            
         case .fill:
             items = swatches
             sel = t?.fillIndex
-
+            
         case .stroke:
             items = [noneItem] + swatches
             if let t = t {
@@ -71,7 +71,7 @@ extension ViewController {
                     }
                 }
             }
-
+            
         case .shadow:
             for (i, s) in TextShadow.allCases.enumerated() {
                 items.append(PanelItem(title: s.title, image: textSample("shadow\(i)") {
@@ -79,15 +79,15 @@ extension ViewController {
                 }, fit: true))
             }
             sel = t?.shadow
-
+            
         case .shadowColor:
             items = swatches
             sel = t?.shadowColorIndex
-
+            
         case .glow:
             items = [noneItem] + swatches
             if let t = t { sel = t.glowIndex < 0 ? 0 : t.glowIndex + 1 }
-
+            
         case .box:
             items = [noneItem] + swatches
             if let t = t {
@@ -98,7 +98,7 @@ extension ViewController {
                     }
                 }
             }
-
+            
         case .format:
             for (i, w) in TextFonts.weights.enumerated() {
                 items.append(PanelItem(title: w.0, badge: "Aa", on: t.map { $0.weight == i }))
@@ -114,7 +114,7 @@ extension ViewController {
                     String(format: "%.2f", Double($0))
                 }
             }
-
+            
         case .animIn, .animOut:
             items = TextAnim.allCases.map { PanelItem(title: $0.title, symbol: $0.symbol) }
             if let t = t {
@@ -126,13 +126,14 @@ extension ViewController {
                 }
             }
         }
-
+        
         let title: String
         if t == nil && textTab != .text { title = "Выберите текст на дорожке или нажмите на него в видео" }
         else { title = textTab.title }
+        let extraTitle: String? = (t != nil && texts.count > 1 && textTab != .text) ? "Ко всем" : nil
         panel.configure(title: title, items: items, selected: sel, slider: cfg,
                         chips: TextTab.allCases.map { $0.title }, selectedChip: textTab.rawValue,
-                        keepScroll: keepScroll)
+                        extra: extraTitle, keepScroll: keepScroll)
     }
 
     func mutateSelectedText(_ f: (inout TextOverlay) -> Void) {
@@ -145,11 +146,14 @@ extension ViewController {
         textsChanged()
     }
 
+    // ИСПРАВЛЕНО: Кнопка на панели открывает меню/опции текста, а не сразу создает пустой текст
     func handleTextPanel(_ index: Int) {
         switch textTab {
         case .text:
             switch index {
-            case 0: presentTextInput(editing: nil)
+            case 0:
+                // Открываем модальное окно ввода только при нажатии "Добавить" внутри меню
+                presentTextInput(editing: nil)
             case 1:
                 guard let t = selectedText else { showToast("Выберите текст на дорожке под видео"); return }
                 presentTextInput(editing: t)
@@ -220,8 +224,6 @@ extension ViewController {
             playRange(from: max(0, o.start - 0.3), until: o.start + d + 0.9)
         }
     }
-
-    // MARK: Text editing
 
     func presentTextInput(editing: TextOverlay?) {
         pausePlayback()
@@ -321,7 +323,6 @@ extension ViewController {
             return
         }
         
-        // Старая логика для текста:
         guard let id = selectedTextID, let idx = texts.firstIndex(where: { $0.id == id }) else { return }
         let vr = videoRectInPlayer()
         guard vr.width > 0, vr.height > 0 else { return }
@@ -354,5 +355,35 @@ extension ViewController {
             refreshVideoComposition()
             return
         }
+    }
+    
+    func applyTextStyleToAll() {
+        guard let src = selectedText, texts.count > 1 else { return }
+        pushUndo()
+        for k in 0..<texts.count {
+            texts[k].size = src.size
+            texts[k].position = src.position
+            texts[k].rotation = src.rotation
+            texts[k].fillIndex = src.fillIndex
+            texts[k].strokeIndex = src.strokeIndex
+            texts[k].strokeWidth = src.strokeWidth
+            texts[k].shadow = src.shadow
+            texts[k].shadowColorIndex = src.shadowColorIndex
+            texts[k].glowIndex = src.glowIndex
+            texts[k].boxIndex = src.boxIndex
+            texts[k].boxOpacity = src.boxOpacity
+            texts[k].fontIndex = src.fontIndex
+            texts[k].weight = src.weight
+            texts[k].italic = src.italic
+            texts[k].underline = src.underline
+            texts[k].strike = src.strike
+            texts[k].alignment = src.alignment
+            texts[k].letterSpacing = src.letterSpacing
+            texts[k].animIn = src.animIn
+            texts[k].animOut = src.animOut
+            texts[k].animDuration = src.animDuration
+        }
+        textsChanged()
+        showToast("Стиль и эффекты применены ко всем текстам")
     }
 }

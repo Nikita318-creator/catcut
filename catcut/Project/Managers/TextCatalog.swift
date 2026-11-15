@@ -126,9 +126,11 @@ struct TextAnimState {
     var glitch: CGFloat = 0
 }
 
+// В файл Managers/TextCatalog.swift внутри enum TextAnim добавьте новый кейс и логику:
+
 enum TextAnim: Int, CaseIterable {
     case none, fade, slideUp, slideDown, slideLeft, slideRight, pop, zoomIn, grow, drop
-    case spin, flip, typewriter, words, wipeRight, wipeLeft, blur, flicker, glitch, swing
+    case spin, flip, typewriter, typewriterSmooth, words, wipeRight, wipeLeft, blur, flicker, glitch, swing
 
     var title: String {
         switch self {
@@ -144,7 +146,8 @@ enum TextAnim: Int, CaseIterable {
         case .drop: return "Падение"
         case .spin: return "Вращение"
         case .flip: return "Переворот"
-        case .typewriter: return "Печать"
+        case .typewriter: return "Печать (быстро)"
+        case .typewriterSmooth: return "Печать (плавно)" // <--- Добавлено
         case .words: return "По словам"
         case .wipeRight: return "Шторка →"
         case .wipeLeft: return "Шторка ←"
@@ -169,7 +172,7 @@ enum TextAnim: Int, CaseIterable {
         case .drop: return "arrow.down.to.line"
         case .spin: return "arrow.triangle.2.circlepath"
         case .flip: return "arrow.left.and.right"
-        case .typewriter: return "keyboard"
+        case .typewriter, .typewriterSmooth: return "keyboard"
         case .words: return "text.alignleft"
         case .wipeRight: return "forward.end.fill"
         case .wipeLeft: return "backward.end.fill"
@@ -180,7 +183,6 @@ enum TextAnim: Int, CaseIterable {
         }
     }
 
-    /// a: 0 — текст скрыт, 1 — показан полностью. inPhase: появление (true) или исчезание (false).
     func apply(a rawA: CGFloat, inPhase: Bool, time: Double, to s: inout TextAnimState) {
         let a = max(0, min(1, rawA))
         guard a < 1, self != .none else { return }
@@ -214,6 +216,9 @@ enum TextAnim: Int, CaseIterable {
         case .spin: s.rot -= sign * k * .pi; s.scale *= 0.4 + 0.6 * a; s.alpha *= a
         case .flip: s.scaleX *= max(0.02, a); s.alpha *= a
         case .typewriter: s.visible = min(s.visible, a)
+        case .typewriterSmooth:
+            // Плавное появление букв с нелинейным сглаживанием
+            s.visible = min(s.visible, pow(a, 1.3))
         case .words: s.visible = min(s.visible, a); s.byWord = true
         case .wipeRight: s.wipe = min(s.wipe, a); s.wipeFromRight = false
         case .wipeLeft: s.wipe = min(s.wipe, a); s.wipeFromRight = true
