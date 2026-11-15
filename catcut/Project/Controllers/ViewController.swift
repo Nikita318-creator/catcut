@@ -513,6 +513,14 @@ final class ViewController: UIViewController {
         timelineView.onFilterOverlayTimeChanged = { [weak self] id, s, d in
             self?.commitFilterOverlayTime(id, start: s, duration: d)
         }
+        timelineView.onOpenTextPanel = { [weak self] in
+            guard let self = self else { return }
+            self.handleTool(.text) // Открывает панель текста ровно так же, как кнопка на панели инструментов
+        }
+        timelineView.onOpenAudioPanel = { [weak self] in
+            guard let self = self else { return }
+            self.handleTool(.audio) // Открывает панель аудио ровно так же, как кнопка на панели инструментов
+        }
         
         panel.onClose = { [weak self] in self?.closePanel() }
         panel.onSelect = { [weak self] index in self?.handlePanelSelect(index) }

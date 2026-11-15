@@ -181,10 +181,7 @@ final class AudioBarView: UIView {
             let midY = h / 2 + 5
             
             while px < w && i < peaks.count {
-                // Текущая секунда внутри этой аудиодорожки
                 let t = Double(px) / w * duration
-                
-                // Расчет огибающей для появления (Fade In) и затухания (Fade Out)
                 var envelope: CGFloat = 1.0
                 if fadeIn > 0, t < fadeIn {
                     envelope = CGFloat(t / fadeIn)
@@ -194,10 +191,7 @@ final class AudioBarView: UIView {
                     envelope = CGFloat(max(0, remaining / fadeOut))
                 }
                 
-                // Учет громкости (volume от 0 до 3)
                 let volFactor = CGFloat(max(0, volume))
-                
-                // Итоговая высота пика с учетом громкости и фейдов
                 let rawPeak = CGFloat(peaks[min(i, peaks.count - 1)])
                 let finalPeak = rawPeak * volFactor * envelope
                 let bh = max(1.5, finalPeak * (h - 14))
@@ -221,7 +215,7 @@ enum TimelineLane { case video, overlay, filter, text, audio }
 final class TimelineScrollView: UIScrollView {
     var touchDownPoint: CGPoint = .zero
     var blocksScroll: ((CGPoint) -> Bool)?
-    var isLongPressActive: Bool = false // Флаг блокировки скролла
+    var isLongPressActive: Bool = false
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         touchDownPoint = point
@@ -229,7 +223,6 @@ final class TimelineScrollView: UIScrollView {
     }
 
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-        // Если идет перетаскивание по долгому нажатию — полностью глушим скролл ленты
         if g === panGestureRecognizer, isLongPressActive { return false }
         if g === panGestureRecognizer, blocksScroll?(touchDownPoint) == true { return false }
         return super.gestureRecognizerShouldBegin(g)
@@ -238,17 +231,15 @@ final class TimelineScrollView: UIScrollView {
 
 final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
 
-    /// Высота ленты фиксированная: 3 дорожки (видео, текст, аудио) помещаются целиком,
-    /// всё остальное (оверлеи, фильтры, второй ряд текста…) уходит на вертикальный скролл.
     static let minHeight: CGFloat = 148
     static let maxHeight: CGFloat = 148
     private let rulerHeight: CGFloat = 22
     private let chipW: CGFloat = 30
     private let chipH: CGFloat = 24
 
-    private var pps: CGFloat = 64               // точек на секунду (меняется щипком)
-    private let minPPS: CGFloat = 4           // максимально «сжатая» лента
-    private let maxPPS: CGFloat = 240           // максимально «растянутая» лента
+    private var pps: CGFloat = 64
+    private let minPPS: CGFloat = 4
+    private let maxPPS: CGFloat = 240
     private var pinchStartPPS: CGFloat = 64
     private var pinch: UIPinchGestureRecognizer!
     private let clipTop: CGFloat = 24
@@ -256,8 +247,8 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     private let laneHeight: CGFloat = 22
     private let laneStep: CGFloat = 26
     private let handleZone: CGFloat = 28
-    private let overlayRowH: CGFloat = 34       // высота плитки оверлея
-    private let overlayStep: CGFloat = 38       // шаг между рядами оверлеев
+    private let overlayRowH: CGFloat = 34
+    private let overlayStep: CGFloat = 38
     private let minDur: Double = 0.3
 
     private let scrollView = TimelineScrollView()
@@ -288,11 +279,15 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     var onOpenAudioEditor: ((UUID) -> Void)?
     var onClipsReordered: (([VideoClip]) -> Void)?
     var onSelectOverlay: ((UUID) -> Void)?
-    var onOverlayTimeChanged: ((UUID, Double, Double, Double) -> Void)?   // id, start, sourceStart, duration
+    var onOverlayTimeChanged: ((UUID, Double, Double, Double) -> Void)?
     var filterOverlays: [FilterOverlay] = []
     var selectedFilterOverlay: UUID?
     var onSelectFilterOverlay: ((UUID) -> Void)?
     var onFilterOverlayTimeChanged: ((UUID, Double, Double) -> Void)?
+    
+    // Новые колбэки для дублирования открытия меню панели по тапу на пустую дорожку
+    var onOpenTextPanel: (() -> Void)?
+    var onOpenAudioPanel: (() -> Void)?
     
     private var filterItems: [Item] = []
     private var overlays: [VideoOverlay] = []
@@ -319,7 +314,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
 
     private var isProgrammatic = false
 
-    // Жёсткая блокировка осей: за один жест лента едет ЛИБО по горизонтали (время), ЛИБО по вертикали (дорожки)
     private enum ScrollAxis { case horizontal, vertical }
     private var lockedAxis: ScrollAxis?
     private var dragStartOffset: CGPoint = .zero
@@ -333,7 +327,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     private var totalSeconds: Double { layout.total.secs }
     var isUserScrolling: Bool { scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating }
 
-    // drag (обрезка за края)
     private enum DragKind {
         case clipLeft(Int), clipRight(Int)
         case textLeft(UUID), textRight(UUID)
@@ -359,28 +352,27 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     }
     private var drag: DragState?
 
-    // Состояние для долгого нажатия (перемещение блоков)
     private struct MoveDragState {
         var kind: DragKind
         var view: UIView
         var origFrame: CGRect
-        var grabOffsetX: CGFloat      // где палец схватил блок: touchContentX - origFrame.minX
-        // видео
+        var grabOffsetX: CGFloat
         var fromIndex: Int = 0
         var toIndex: Int = 0
-        var slotX: CGFloat = 0        // куда «упадёт» перетаскиваемый клип
-        // текст / аудио
+        var slotX: CGFloat = 0
         var origStart: Double = 0
         var newStart: Double = 0
         var duration: Double = 0
         var sourceOffset: Double = 0
     }
     private var moveDrag: MoveDragState?
-    private var moveTouchX: CGFloat = 0          // позиция пальца в координатах TimelineView
+    private var moveTouchX: CGFloat = 0
     private var autoScrollLink: CADisplayLink?
     private var autoScrollStartOffset: CGFloat = 0
 
-    /// Текущее время на таймлайне на основе позиции скролла
+    private var dragAutoScrollLink: CADisplayLink?
+    private var currentDragScrollSpeed: CGFloat = 0
+
     var currentTime: Double {
         return Double(scrollView.contentOffset.x / pps)
     }
@@ -451,7 +443,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             chips[lane] = b
         }
         chips.values.forEach { bringSubviewToFront($0) }
-        bringSubviewToFront(ruler)      // линейка непрозрачная и перекрывает чипы/дорожки, ушедшие вверх
+        bringSubviewToFront(ruler)
         bringSubviewToFront(playhead)
         bringSubviewToFront(knob)
 
@@ -463,13 +455,11 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         dragPan.delegate = self
         contentView.addGestureRecognizer(dragPan)
 
-        // Долгое нажатие для перетаскивания объектов
         let longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPressGesture.minimumPressDuration = 0.4
         longPressGesture.delegate = self
         contentView.addGestureRecognizer(longPressGesture)
 
-        // Щипок двумя пальцами по любой дорожке — масштаб ленты
         pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         pinch.delegate = self
         addGestureRecognizer(pinch)
@@ -479,12 +469,11 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         switch g.state {
         case .began:
             pinchStartPPS = pps
-            scrollView.isScrollEnabled = false   // пока щиплем — лента не скроллится
+            scrollView.isScrollEnabled = false
         case .changed:
             let target = min(maxPPS, max(minPPS, pinchStartPPS * g.scale))
             guard abs(target - pps) > 0.4 else { return }
             pps = target
-            // Лента масштабируется вокруг красной палки (она всегда по центру)
             rebuildContent()
             setPlayhead(time: lastPlayheadTime, force: true)
         case .ended, .cancelled, .failed:
@@ -494,8 +483,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    func gestureRecognizer(_ g: UIGestureRecognizer,
-                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         return g === pinch || other === pinch
     }
 
@@ -558,7 +546,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         layoutChips()
     }
 
-    /// Выбрали элемент на дорожке, которая сейчас за кадром, — аккуратно докручиваем вертикаль к ней.
     private func revealFocusedLaneIfSelectionChanged() {
         let key = "\(selectedClip.map(String.init) ?? "-")|\(selectedText?.uuidString ?? "-")|\(selectedAudio?.uuidString ?? "-")|\(selectedOverlay?.uuidString ?? "-")|\(selectedFilterOverlay?.uuidString ?? "-")"
         guard key != lastSelectionKey else { return }
@@ -579,7 +566,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         layoutChips()
     }
 
-    /// Чипы дорожек не входят в контент скролла, поэтому ездят по вертикали вручную вместе с дорожками.
     private func layoutChips() {
         let off = scrollView.contentOffset.y
         for (lane, b) in chips {
@@ -649,7 +635,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         let textBase = filterBase + filterBlockH + 4
         let audioBase = textBase + CGFloat(textRows) * laneStep + 4
         
-        // Общая высота с учетом вертикального скролла, чтобы дорожки не росли бесконечно вверх
         let totalContentHeight = max(TimelineView.minHeight, audioBase + CGFloat(audioRows) * laneStep + 4)
         
         contentView.frame = CGRect(x: 0, y: 0, width: contentW, height: totalContentHeight)
@@ -703,7 +688,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             b.tintColor = on ? .black : .white
         }
         
-        // 1. Основные видеоклипы
         for (i, clip) in clips.enumerated() where i < layout.starts.count {
             let x = side + CGFloat(layout.starts[i].secs) * pps + 1
             let w = max(10, CGFloat(layout.durations[i].secs) * pps - 2)
@@ -718,7 +702,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             contentView.bringSubviewToFront(clipViews[sel])
         }
         
-        // 2. Оверлеи
         for (k, o) in overlays.enumerated() {
             let x = side + CGFloat(o.start) * pps
             let w = max(24, CGFloat(o.duration) * pps)
@@ -733,7 +716,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             contentView.bringSubviewToFront(item.view)
         }
         
-        // 3. Дорожка фильтров
         for (k, f) in filterOverlays.enumerated() {
             let x = side + CGFloat(f.start) * pps
             let w = max(24, CGFloat(f.duration) * pps)
@@ -756,7 +738,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             filterItems.append(Item(id: f.id, frame: bar.frame, view: bar))
         }
         
-        // 4. Переходы между видео
         if clips.count > 1 {
             for j in 0..<(clips.count - 1) {
                 let cx = side + CGFloat(layout.starts[j + 1].secs) * pps
@@ -781,7 +762,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             }
         }
         
-        // 5. Текст
         for (k, o) in texts.enumerated() {
             let x = side + CGFloat(o.start) * pps
             let w = max(24, CGFloat(o.duration) * pps)
@@ -804,7 +784,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             textItems.append(Item(id: o.id, frame: bar.frame, view: bar))
         }
         
-        // 6. Аудио
         for (k, a) in audios.enumerated() {
             let x = side + CGFloat(a.start) * pps
             let w = max(24, CGFloat(a.duration) * pps)
@@ -830,7 +809,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         contentView.addSubview(addTile)
         
         layoutChips()
-        // Высота ленты не растёт: лишние дорожки уходят на вертикальный скролл
         let needed = min(TimelineView.maxHeight, max(TimelineView.minHeight, audioBase + CGFloat(audioRows) * laneStep + 8))
         if abs(needed - requiredHeight) > 0.5 {
             requiredHeight = needed
@@ -854,9 +832,23 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             return
         }
         
+        // Тап в пустую область текстовой дорожки -> дублируем поведение кнопки «Текст» на панели снизу
+        if let textLaneRow = laneRows.first(where: { $0.lane == .text }), textLaneRow.rect.contains(p) {
+            onFocusLane?(.text)
+            onOpenTextPanel?()
+            return
+        }
+        
         for item in audioItems.reversed() where item.frame.contains(p) {
             onSelectAudio?(item.id)
             onOpenAudioEditor?(item.id)
+            return
+        }
+        
+        // Тап в пустую область аудиодорожки -> дублируем поведение кнопки «Аудио» на панели снизу
+        if let audioLaneRow = laneRows.first(where: { $0.lane == .audio }), audioLaneRow.rect.contains(p) {
+            onFocusLane?(.audio)
+            onOpenAudioPanel?()
             return
         }
         
@@ -877,6 +869,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             if item.id == selectedFilterOverlay { onDeselectAll?() } else { onSelectFilterOverlay?(item.id) }
             return
         }
+        
         onDeselectAll?()
     }
 
@@ -935,7 +928,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         return true
     }
 
-    // MARK: - Drag (Обрезка краёв)
     @objc private func handleDrag(_ g: UIPanGestureRecognizer) {
         let x = g.location(in: self).x
         switch g.state {
@@ -983,6 +975,18 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     private func updateDrag(x: CGFloat) {
         guard var d = drag else { return }
         if abs(x - d.startTouchX) > 2 { d.moved = true }
+        
+        let edgeThreshold: CGFloat = 50
+        let maxAutoScrollSpeed: CGFloat = 400
+        if x < edgeThreshold {
+            let speed = -maxAutoScrollSpeed * (edgeThreshold - x) / edgeThreshold
+            scrollTimelineBy(speed: speed)
+        } else if x > bounds.width - edgeThreshold {
+            let speed = maxAutoScrollSpeed * (x - (bounds.width - edgeThreshold)) / edgeThreshold
+            scrollTimelineBy(speed: speed)
+        } else {
+            stopDragAutoScroll()
+        }
         
         let deltaSecs = Double((x - d.startTouchX) / pps)
         let total = totalSeconds
@@ -1059,7 +1063,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             let s0 = o.start, e0 = o.start + o.duration
             var ns = s0, ne = e0, off = o.sourceStart
             if case .overlayLeft = d.kind {
-                // у видео нельзя уйти левее начала исходника, у картинки — можно (кадр один)
                 let minStart = o.isImage ? 0 : max(0, s0 - o.sourceStart)
                 ns = min(max(minStart, s0 + deltaSecs), e0 - minDur)
                 if !o.isImage { off = o.sourceStart + (ns - s0) }
@@ -1075,9 +1078,50 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         drag = d
     }
 
+    private func scrollTimelineBy(speed: CGFloat) {
+        if dragAutoScrollLink == nil {
+            let link = CADisplayLink(target: self, selector: #selector(dragAutoScrollTick(_:)))
+            link.add(to: .main, forMode: .common)
+            dragAutoScrollLink = link
+        }
+        currentDragScrollSpeed = speed
+    }
+
+    @objc private func dragAutoScrollTick(_ link: CADisplayLink) {
+        guard drag != nil else {
+            stopDragAutoScroll()
+            return
+        }
+        let dt = CGFloat(link.targetTimestamp - link.timestamp)
+        let maxOffset = max(0, scrollView.contentSize.width - scrollView.bounds.width)
+        let newX = min(max(0, scrollView.contentOffset.x + currentDragScrollSpeed * dt), maxOffset)
+        
+        guard newX != scrollView.contentOffset.x else { return }
+        
+        isProgrammatic = true
+        scrollView.contentOffset.x = newX
+        isProgrammatic = false
+        
+        ruler.offsetX = scrollView.contentOffset.x
+        ruler.setNeedsDisplay()
+        
+        if var d = drag {
+            d.startTouchX -= currentDragScrollSpeed * dt
+            drag = d
+        }
+    }
+
+    private func stopDragAutoScroll() {
+        dragAutoScrollLink?.invalidate()
+        dragAutoScrollLink = nil
+        currentDragScrollSpeed = 0
+    }
+
     private func endDrag(commit: Bool) {
         guard let d = drag else { return }
         drag = nil
+        stopDragAutoScroll()
+        
         guard commit, d.moved else {
             rebuildContent()
             return
@@ -1095,8 +1139,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    // MARK: - Move (долгое нажатие: перестановка видео, сдвиг текста/аудио)
-
     @objc private func handleLongPress(_ g: UILongPressGestureRecognizer) {
         switch g.state {
         case .began:
@@ -1107,7 +1149,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             scrollView.isLongPressActive = true
             scrollView.isScrollEnabled = false
             beginMoveDrag(kind, touchContentX: p.x)
-            if moveDrag == nil {            // не смогли начать — вернуть скролл
+            if moveDrag == nil {
                 scrollView.isLongPressActive = false
                 scrollView.isScrollEnabled = true
             }
@@ -1164,7 +1206,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         moveDrag = s
 
         if case .clipMove = kind {
-            // иконки переходов на время перетаскивания прячем — они привязаны к старым стыкам
             transitionViews.forEach { $0.alpha = 0 }
         }
 
@@ -1177,15 +1218,12 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         startAutoScroll()
     }
 
-    /// Вызывается и при движении пальца, и из таймера автоскролла.
     private func updateMoveDrag() {
         guard let d = moveDrag else { return }
         let side = bounds.width / 2
         let trackWidth = CGFloat(totalSeconds) * pps
         let w = d.origFrame.width
 
-        // Позиция пальца в координатах контента (учитывает автоскролл) минус точка захвата.
-        // Никаких накопленных дельт и frame под transform — только center.x.
         let touchContentX = moveTouchX + scrollView.contentOffset.x
         let lo = side
         let hi = max(lo, side + trackWidth - w)
@@ -1202,8 +1240,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    /// Пересчёт места вставки клипа. Считаем по серединам ОСТАЛЬНЫХ клипов — это стабильно, без дребезга.
-    /// Остальные плитки плавно разъезжаются, ленту не пересобираем.
     private func updateClipSlots(dragCenterX: CGFloat) {
         guard let d = moveDrag, case .clipMove = d.kind else { return }
         let side = bounds.width / 2
@@ -1300,8 +1336,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    // MARK: - Автоскролл у краёв (лента во время перетаскивания не скроллится пальцем)
-
     private func startAutoScroll() {
         guard autoScrollLink == nil else { return }
         let link = CADisplayLink(target: self, selector: #selector(autoScrollTick(_:)))
@@ -1318,7 +1352,7 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     @objc private func autoScrollTick(_ link: CADisplayLink) {
         guard moveDrag != nil else { stopAutoScroll(); return }
         let edge: CGFloat = 56
-        let maxSpeed: CGFloat = 520            // pt/сек
+        let maxSpeed: CGFloat = 520
         let x = min(max(moveTouchX, 0), bounds.width)
         var speed: CGFloat = 0
         if x < edge {
@@ -1339,7 +1373,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         updateMoveDrag()
     }
 
-    /// Если лента уехала автоскроллом — красная палка теперь на другом времени, синхронизируем превью.
     private func syncPlayheadAfterAutoScroll() {
         guard abs(scrollView.contentOffset.x - autoScrollStartOffset) > 0.5 else { return }
         let t = max(0, min(totalSeconds, Double(scrollView.contentOffset.x / pps)))
@@ -1351,7 +1384,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         lockedAxis = nil
         dragStartOffset = scrollView.contentOffset
-        // onScrubBegan (пауза плеера) вызываем позже — только когда стало ясно, что это горизонтальный жест
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -1366,7 +1398,6 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
         if isEnforcingLock { return }
         let userDriven = sv.isTracking || sv.isDragging || sv.isDecelerating
 
-        // 1. Определяем ось жеста по первым движениям пальца и намертво фиксируем вторую ось
         if userDriven, !isProgrammatic {
             if lockedAxis == nil, sv.isDragging {
                 let dx = abs(sv.contentOffset.x - dragStartOffset.x)
@@ -1400,12 +1431,10 @@ final class TimelineView: UIView, UIScrollViewDelegate, UIGestureRecognizerDeleg
             }
         }
 
-        // 2. Линейка и чипы следуют за лентой
         ruler.offsetX = sv.contentOffset.x
         ruler.setNeedsDisplay()
         layoutChips()
 
-        // 3. Время (превью) двигаем только горизонтальным жестом — вертикальный скролл превью не трогает
         guard !isProgrammatic, userDriven, lockedAxis != .vertical else { return }
         let t = max(0, min(totalSeconds, Double(sv.contentOffset.x / pps)))
         lastPlayheadTime = t
