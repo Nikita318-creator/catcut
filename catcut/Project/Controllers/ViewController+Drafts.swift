@@ -39,31 +39,21 @@ extension ViewController {
         return draft
     }
     
-    func saveDraft(silent: Bool, isAuto: Bool = false) {
+    func saveDraft(silent: Bool, isAuto: Bool = true) {
         guard !clips.isEmpty else { return }
         
         let id: UUID
         if isAuto {
-            // Ищем существующий автосейв в хранилище, чтобы перезаписывать именно его,
-            // либо создаем уникальный ID для автосейва, если его еще не было.
+            // Всегда ищем единственный автосейв в хранилище и перезаписываем его ID.
             let existingAuto = DraftStore.shared.list().first(where: { $0.isAutoSaved == true })
-            id = existingAuto?.id ?? UUID()
+            id = existingAuto?.id ?? currentDraftID ?? UUID()
+            currentDraftID = id
         } else {
-            // Если юзер сохраняет вручную, а до этого мы были в режиме автосейва —
-            // можем отвязать текущий ID от автосейва или сохранить как полноценный черновик.
-            if let currentID = currentDraftID,
-               let current = DraftStore.shared.list().first(where: { $0.id == currentID }),
-               current.isAutoSaved == true {
-                // Превращаем текущий автосейв в обычный ручной черновик
-                var updatedDraft = current
-                updatedDraft.isAutoSaved = false
-                updatedDraft.updated = Date()
-                DraftStore.shared.save(updatedDraft, coverAsset: clips.first?.asset, coverTime: (clips.first?.sourceRange.start.secs ?? 0) + 0.05)
-                // И создаем новый ID для последующего автосейва
+            // Ручное сохранение по кнопке — только тогда создается/обновляется отдельный ручной черновик
+            if currentDraftID == nil || (DraftStore.shared.list().first(where: { $0.id == currentDraftID })?.isAutoSaved == true) {
                 currentDraftID = UUID()
             }
-            id = currentDraftID ?? UUID()
-            currentDraftID = id
+            id = currentDraftID!
         }
         
         let draftToSave = makeDraft(id: id, isAuto: isAuto, overlays: overlays)
@@ -83,7 +73,7 @@ extension ViewController {
 
     @objc func didTapDrafts() {
         pausePlayback()
-        saveDraft(silent: true)
+        saveDraft(silent: true, isAuto: true)
         let vc = DraftsViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.currentDraftID = currentDraftID

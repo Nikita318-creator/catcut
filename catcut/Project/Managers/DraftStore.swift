@@ -96,9 +96,15 @@ final class DraftStore {
     func list() -> [Draft] {
         let files = (try? FileManager.default.contentsOfDirectory(at: draftsDir, includingPropertiesForKeys: nil)) ?? []
         let decoder = JSONDecoder()
-        return files.filter { $0.pathExtension == "json" }
+        let drafts = files.filter { $0.pathExtension == "json" }
             .compactMap { try? decoder.decode(Draft.self, from: Data(contentsOf: $0)) }
-            .sorted { $0.updated > $1.updated }
+        
+        // Автосохранение ВСЕГДА в топе, остальные — по дате обновления (свежие сверху)
+        return drafts.sorted { d1, d2 in
+            if (d1.isAutoSaved == true) && !(d2.isAutoSaved == true) { return true }
+            if !(d1.isAutoSaved == true) && (d2.isAutoSaved == true) { return false }
+            return d1.updated > d2.updated
+        }
     }
 
     func save(_ draft: Draft, coverAsset: AVAsset?, coverTime: Double) {

@@ -167,10 +167,10 @@ final class ViewController: UIViewController {
     }
 
     override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
+        super.viewWillDisappear(animated) // (или viewWillDisappear)
         stopAutoSaveTimer()
         pausePlayback()
-        if presentedViewController == nil { saveDraft(silent: true, isAuto: false) }
+        if presentedViewController == nil { saveDraft(silent: true, isAuto: true) } // ЖЕСТКО isAuto: true
     }
 
     func startAutoSaveTimer() {
@@ -197,7 +197,7 @@ final class ViewController: UIViewController {
     }
 
     @objc func appWillResign() {
-        saveDraft(silent: true)   // авто-сохранение, чтобы прогресс не терялся
+        saveDraft(silent: true, isAuto: true) // ЖЕСТКО isAuto: true
     }
 
     // MARK: Layout
