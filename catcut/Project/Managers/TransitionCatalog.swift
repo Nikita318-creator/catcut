@@ -16,24 +16,24 @@ enum TransitionCategory: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .favorites: return "♥ Избранное"
+        case .favorites: return "Избранное"
         case .all: return "Все"
-        case .motion: return "⚡️ Движение"
-        case .glitch: return "👾 Помехи"
-        case .zoom: return "🌀 Приближение"
-        case .distort: return "🌊 Волны"
-        case .wipe: return "🪟 Шторки"
-        case .flip3d: return "🧊 Объём"
-        case .light: return "✨ Вспышки"
-        case .fade: return "💧 Плавные"
-        case .mathMatrix: return "📐 Геометрия"
-        case .warpAdvanced: return "🧬 Пластика"
-        case .velocityMotion: return "⚡️ Скорость"
-        case .spinWarp: return "🌀 Вращение"
-        case .cyberGlitch: return "👾 Ретро и сбои"
-        case .lightLeaks: return "✨ Засветки"
-        case .opticalFlow: return "🌊 Жидкость"
-        case .atmosphericFade: return "🎬 Атмосфера"
+        case .motion: return "Движение"
+        case .glitch: return "Помехи"
+        case .zoom: return "Приближение"
+        case .distort: return "Волны"
+        case .wipe: return "Шторки"
+        case .flip3d: return "Объём"
+        case .light: return "Вспышки"
+        case .fade: return "Плавные"
+        case .mathMatrix: return "Геометрия"
+        case .warpAdvanced: return "Пластика"
+        case .velocityMotion: return "Скорость"
+        case .spinWarp: return "Вращение"
+        case .cyberGlitch: return "Ретро и сбои"
+        case .lightLeaks: return "Засветки"
+        case .opticalFlow: return "Жидкость"
+        case .atmosphericFade: return "Атмосфера"
         case .cinematic: return "Кино"
         case .depthCard: return "Карточки"
         case .glassSoft: return "Стекло и дымка"
@@ -341,26 +341,26 @@ enum TransitionCatalog {
         let pureWhite = CIColor(red: 1, green: 1, blue: 1)
 
         // --- 1. Геометрия ---
-        add("Зыбь на воде 🌊", .sineRipple(freq: 0.04, amp: 30), .mathMatrix, fx: .zoomBlur, ease: .elastic)
-        add("Водоворот 🌀", .hyperbolicSaddle(strength: 1.8), .mathMatrix, fx: .chromatic, ease: .smooth)
-        add("Золотая спираль ✨", .fibonacciSpiral(turns: 3.5), .mathMatrix, fx: .goldFlash, ease: .back)
-        add("Матрица 🔢", .matrixQuantize(gridSize: 24), .mathMatrix, fx: .cyberpunk, ease: .snap)
+        add("Зыбь на воде", .sineRipple(freq: 0.04, amp: 30), .mathMatrix, fx: .zoomBlur, ease: .elastic)
+        add("Водоворот", .hyperbolicSaddle(strength: 1.8), .mathMatrix, fx: .chromatic, ease: .smooth)
+        add("Золотая спираль", .fibonacciSpiral(turns: 3.5), .mathMatrix, fx: .goldFlash, ease: .back)
+        add("Матрица", .matrixQuantize(gridSize: 24), .mathMatrix, fx: .cyberpunk, ease: .snap)
 
         // --- 2. Пластика ---
-        add("Жидкое стекло 🌊", .liquidWarp(frequency: 0.05, amplitude: 35), .warpAdvanced, fx: .zoomBlur, ease: .elastic)
-        add("Наклон кадра 📐", .perspectiveMorph(angle: 1.2), .warpAdvanced, fx: .dualAberration, ease: .smooth)
-        add("Тоннель 🌀", .vortexSwirl(turns: 4.0), .warpAdvanced, fx: .chromatic, ease: .back)
-        add("Линза 🔍", .glassRefraction(strength: 45), .warpAdvanced, fx: .zoomBlur, ease: .snap)
+        add("Жидкое стекло", .liquidWarp(frequency: 0.05, amplitude: 35), .warpAdvanced, fx: .zoomBlur, ease: .elastic)
+        add("Наклон кадра", .perspectiveMorph(angle: 1.2), .warpAdvanced, fx: .dualAberration, ease: .smooth)
+        add("Тоннель", .vortexSwirl(turns: 4.0), .warpAdvanced, fx: .chromatic, ease: .back)
+        add("Линза", .glassRefraction(strength: 45), .warpAdvanced, fx: .zoomBlur, ease: .snap)
 
         // --- 3. Движение ---
         let four: [(Dir, String)] = [(.left, "←"), (.right, "→"), (.up, "↑"), (.down, "↓")]
         for (d, a) in four {
-            add("Быстрый сдвиг \(a)", .push(d), .motion, fx: .zoomBlur, ease: .snap)
+            add("Быстй сдвиг \(a)", .push(d), .motion, fx: .zoomBlur, ease: .snap)
             add("Цветной рывок \(a)", .push(d), .motion, fx: .rgb, ease: .snap)
             add("Мягкий толчок \(a)", .push(d), .motion, fx: .blur, ease: .back)
         }
-        add("Резкий наезд 🚀", .zoom(inward: true, strength: 0.95), .motion, fx: .zoomBlur, ease: .snap)
-        add("Катапульта 💥", .zoom(inward: true, strength: 0.8), .motion, fx: .rgb, ease: .elastic)
+        add("Резкий наезд", .zoom(inward: true, strength: 0.95), .motion, fx: .zoomBlur, ease: .snap)
+        add("Катапульта", .zoom(inward: true, strength: 0.8), .motion, fx: .rgb, ease: .elastic)
         add("Ударный фокус", .dissolve, .motion, fx: .zoomBlur, ease: .snap)
 
         // --- 4. Помехи ---
@@ -382,7 +382,7 @@ enum TransitionCatalog {
         for (deg, a) in [(0, "→"), (180, "←"), (90, "↑"), (270, "↓")] {
             add("Шторка \(a)", .wipe(angle: CGFloat(deg) * .pi / 180, soft: 0.15), .wipe, ease: .smooth)
         }
-        add("Распашные двери ↔", .doors(vertical: true, open: true), .wipe, ease: .back)
+        add("Распашные двери", .doors(vertical: true, open: true), .wipe, ease: .back)
         add("Жалюзи", .blinds(count: 16, angle: 0, soft: 0.05), .wipe)
 
         // --- 8. Объём ---
@@ -390,8 +390,8 @@ enum TransitionCatalog {
         add("Переворот", .flip(vertical: false), .flip3d, ease: .back)
 
         // --- 9. Вспышки и плавные ---
-        add("Белая вспышка 🔥", .dissolve, .light, fx: .flash, ease: .snap)
-        add("Золотая вспышка ✨", .dissolve, .light, fx: .goldFlash, ease: .snap)
+        add("Белая вспышка", .dissolve, .light, fx: .flash, ease: .snap)
+        add("Золотая вспышка", .dissolve, .light, fx: .goldFlash, ease: .snap)
         add("Растворение", .dissolve, .fade, ease: .smooth)
         add("Через чёрный", .dip(deepBlack), .fade, ease: .smooth)
 
@@ -402,17 +402,17 @@ enum TransitionCatalog {
             add("Смазанный пролёт \(d.arrow)", .whipPan(dir: d, blurStrength: 1.0), .velocityMotion, fx: .directionalBlur, ease: .snap)
             add("Цветной пролёт \(d.arrow)", .whipPan(dir: d, blurStrength: 1.2), .velocityMotion, fx: .rgb, ease: .expoFast)
         }
-        add("Мощный наезд 🚀", .velocityZoom(inward: true, ramp: 1.5), .velocityMotion, fx: .zoomBlur, ease: .expoFast)
-        add("Мощный отлёт 💥", .velocityZoom(inward: false, ramp: 1.5), .velocityMotion, fx: .zoomBlur, ease: .expoFast)
+        add("Мощный наезд", .velocityZoom(inward: true, ramp: 1.5), .velocityMotion, fx: .zoomBlur, ease: .expoFast)
+        add("Мощный отлёт", .velocityZoom(inward: false, ramp: 1.5), .velocityMotion, fx: .zoomBlur, ease: .expoFast)
         for d in [Dir.left, Dir.right, Dir.up, Dir.down] {
             add("Прыжок \(d.arrow)", .bounceSnap(dir: d), .velocityMotion, fx: .shake, ease: .bounce)
         }
         add("Сквозной наезд", .crossZoomSpeedRamp, .velocityMotion, fx: .zoomBlur, ease: .snap)
 
-        add("Разворот ↻", .spatial3DSpin(axisX: false, angle: .pi), .spinWarp, fx: .blur, ease: .smooth)
-        add("Кувырок ↺", .spatial3DSpin(axisX: true, angle: .pi), .spinWarp, fx: .blur, ease: .smooth)
-        add("Закрученный наезд 🌀", .vortexSwirlZoom(turns: 3.0), .spinWarp, fx: .chromatic, ease: .back)
-        add("Широкий угол 👁", .fisheyeLens(strength: 1.8), .spinWarp, fx: .zoomBlur, ease: .smooth)
+        add("Разворот", .spatial3DSpin(axisX: false, angle: .pi), .spinWarp, fx: .blur, ease: .smooth)
+        add("Кувырок", .spatial3DSpin(axisX: true, angle: .pi), .spinWarp, fx: .blur, ease: .smooth)
+        add("Закрученный наезд", .vortexSwirlZoom(turns: 3.0), .spinWarp, fx: .chromatic, ease: .back)
+        add("Широкий угол", .fisheyeLens(strength: 1.8), .spinWarp, fx: .zoomBlur, ease: .smooth)
         for d in Dir.allCases {
             add("Резиновый сдвиг \(d.arrow)", .warpSlide(dir: d, elasticity: 1.4), .spinWarp, fx: .dualAberration, ease: .elastic)
         }
@@ -422,21 +422,21 @@ enum TransitionCatalog {
         add("Старая кассета", .vhsScanlineStatic(noiseGrain: 2.5), .cyberGlitch, fx: .shake, ease: .linear)
         add("Стробоскоп", .cyberStrobeQuantize(bands: 16), .cyberGlitch, fx: .cyberpunk, ease: .snap)
 
-        add("Ожог плёнки 🔥", .filmBurnFlash(warmth: 1.0), .lightLeaks, fx: .filmBurn, ease: .smooth)
-        add("Фотовспышка 📸", .whiteCameraFlash, .lightLeaks, fx: .flash, ease: .snap)
-        add("Неоновый блик 💎", .cyberNeonFlare(color: neonCyan), .lightLeaks, fx: .neonFlare, ease: .snap)
+        add("Ожог плёнки", .filmBurnFlash(warmth: 1.0), .lightLeaks, fx: .filmBurn, ease: .smooth)
+        add("Фотовспышка", .whiteCameraFlash, .lightLeaks, fx: .flash, ease: .snap)
+        add("Неоновый блик", .cyberNeonFlare(color: neonCyan), .lightLeaks, fx: .neonFlare, ease: .snap)
         for deg in [0, 90, 180, 270] {
             add("Луч света \(deg)°", .lightLeakSweep(angle: CGFloat(deg) * .pi / 180), .lightLeaks, fx: .goldFlash, ease: .smooth)
         }
 
-        add("Круги на воде 🌊", .liquidRipple(frequency: 0.04, amplitude: 35), .opticalFlow, fx: .zoomBlur, ease: .elastic)
-        add("Призма 🔍", .glassRefractionMesh(refractIndex: 35), .opticalFlow, fx: .dualAberration, ease: .smooth)
-        add("Марево ♨️", .heatWaveMirage(distortion: 25), .opticalFlow, fx: .blur, ease: .smooth)
-        add("Схлопывание 🕳", .blackHolePinch(gravity: 1.8), .opticalFlow, fx: .zoomBlur, ease: .expoFast)
+        add("Круги на воде", .liquidRipple(frequency: 0.04, amplitude: 35), .opticalFlow, fx: .zoomBlur, ease: .elastic)
+        add("Призма", .glassRefractionMesh(refractIndex: 35), .opticalFlow, fx: .dualAberration, ease: .smooth)
+        add("Марево", .heatWaveMirage(distortion: 25), .opticalFlow, fx: .blur, ease: .smooth)
+        add("Схлопывание", .blackHolePinch(gravity: 1.8), .opticalFlow, fx: .zoomBlur, ease: .expoFast)
 
-        add("Лучевое размытие 🌀", .dissolve, .atmosphericFade, fx: .zoomBlur, ease: .smooth)
-        add("Туман 🌫", .noise(grain: 1.5, cloud: true, soft: 0.3), .atmosphericFade, fx: .blur, ease: .smooth)
-        add("Киноплёнка 🎞", .noise(grain: 2.5, cloud: false, soft: 0.1), .atmosphericFade, fx: .none, ease: .linear)
+        add("Лучевое размытие", .dissolve, .atmosphericFade, fx: .zoomBlur, ease: .smooth)
+        add("Туман", .noise(grain: 1.5, cloud: true, soft: 0.3), .atmosphericFade, fx: .blur, ease: .smooth)
+        add("Киноплёнка", .noise(grain: 2.5, cloud: false, soft: 0.1), .atmosphericFade, fx: .none, ease: .linear)
 
         // =====================================================================
         // 11. КИНЕМАТОГРАФИЧНЫЕ И ДЕЛИКАТНЫЕ
@@ -459,10 +459,10 @@ enum TransitionCatalog {
         add("Через размытие", .blurDissolve(strength: 1.0), .cinematic, fx: .none, ease: .silk)
         add("Мягкое свечение", .dissolve, .cinematic, fx: .bloom, ease: .silk)
         add("Засветка кадра", .dissolve, .cinematic, fx: .exposure, ease: .silk)
-        add("Вытягивание ↔", .stretchSwap(vertical: false, amount: 0.9), .cinematic, fx: .softBlur, ease: .cinematic)
-        add("Вытягивание ↕", .stretchSwap(vertical: true, amount: 0.9), .cinematic, fx: .softBlur, ease: .cinematic)
-        add("Покачивание ↻", .driftRotate(angle: 0.16, cw: true), .cinematic, fx: .softBlur, ease: .cinematic)
-        add("Покачивание ↺", .driftRotate(angle: 0.16, cw: false), .cinematic, fx: .softBlur, ease: .cinematic)
+        add("Вытягивание", .stretchSwap(vertical: false, amount: 0.9), .cinematic, fx: .softBlur, ease: .cinematic)
+        add("Вытягивание", .stretchSwap(vertical: true, amount: 0.9), .cinematic, fx: .softBlur, ease: .cinematic)
+        add("Покачивание", .driftRotate(angle: 0.16, cw: true), .cinematic, fx: .softBlur, ease: .cinematic)
+        add("Покачивание", .driftRotate(angle: 0.16, cw: false), .cinematic, fx: .softBlur, ease: .cinematic)
 
         // --- Карточки ---
         for d in fourDirs {
@@ -473,8 +473,8 @@ enum TransitionCatalog {
         }
         add("Куб вправо", .cube(left: false), .depthCard, fx: .softBlur, ease: .cinematic)
         add("Вертикальный переворот", .flip(vertical: true), .depthCard, fx: .softBlur, ease: .silk)
-        add("Лёгкий вихрь ↻", .twirl(cw: true, strength: 1.4), .depthCard, fx: .softBlur, ease: .silk)
-        add("Лёгкий вихрь ↺", .twirl(cw: false, strength: 1.4), .depthCard, fx: .softBlur, ease: .silk)
+        add("Лёгкий вихрь", .twirl(cw: true, strength: 1.4), .depthCard, fx: .softBlur, ease: .silk)
+        add("Лёгкий вихрь", .twirl(cw: false, strength: 1.4), .depthCard, fx: .softBlur, ease: .silk)
         add("Объёмная линза", .bump(sign: 0.6), .depthCard, fx: .softBlur, ease: .silk)
 
         // --- Стекло и дымка ---
@@ -493,17 +493,17 @@ enum TransitionCatalog {
         for (deg, a) in wipeAngles {
             add("Тонкая линия \(a)", .lineWipe(angle: CGFloat(deg) * .pi / 180, width: 0.008), .editorial, fx: .none, ease: .cinematic)
         }
-        add("Полосы ↑", .staggerPanels(count: 6, vertical: true, reverse: false), .editorial, fx: .none, ease: .linear)
-        add("Полосы ↓", .staggerPanels(count: 6, vertical: true, reverse: true), .editorial, fx: .none, ease: .linear)
-        add("Полосы →", .staggerPanels(count: 5, vertical: false, reverse: false), .editorial, fx: .none, ease: .linear)
-        add("Полосы ←", .staggerPanels(count: 5, vertical: false, reverse: true), .editorial, fx: .none, ease: .linear)
+        add("Полосы вверх", .staggerPanels(count: 6, vertical: true, reverse: false), .editorial, fx: .none, ease: .linear)
+        add("Полосы вниз", .staggerPanels(count: 6, vertical: true, reverse: true), .editorial, fx: .none, ease: .linear)
+        add("Полосы вправо", .staggerPanels(count: 5, vertical: false, reverse: false), .editorial, fx: .none, ease: .linear)
+        add("Полосы влево", .staggerPanels(count: 5, vertical: false, reverse: true), .editorial, fx: .none, ease: .linear)
         add("Раскрытие круга", .iris(inward: false, scaleX: 1, soft: 0.04, cx: 0.5, cy: 0.5), .editorial, fx: .none, ease: .cinematic)
         add("Сужение круга", .iris(inward: true, scaleX: 1, soft: 0.04, cx: 0.5, cy: 0.5), .editorial, fx: .none, ease: .cinematic)
         add("Раскрытие овала", .iris(inward: false, scaleX: 1.7, soft: 0.06, cx: 0.5, cy: 0.5), .editorial, fx: .none, ease: .cinematic)
-        add("Тонкие жалюзи ‖", .blinds(count: 28, angle: 0, soft: 0.1), .editorial, fx: .none, ease: .silk)
-        add("Тонкие жалюзи ═", .blinds(count: 28, angle: .pi / 2, soft: 0.1), .editorial, fx: .none, ease: .silk)
-        add("Створки ↕ открыть", .doors(vertical: false, open: true), .editorial, fx: .softBlur, ease: .cinematic)
-        add("Створки ↔ закрыть", .doors(vertical: true, open: false), .editorial, fx: .softBlur, ease: .cinematic)
+        add("Тонкие жалюзи", .blinds(count: 28, angle: 0, soft: 0.1), .editorial, fx: .none, ease: .silk)
+        add("Тонкие жалюзи", .blinds(count: 28, angle: .pi / 2, soft: 0.1), .editorial, fx: .none, ease: .silk)
+        add("Створки открыть", .doors(vertical: false, open: true), .editorial, fx: .softBlur, ease: .cinematic)
+        add("Створки закрыть", .doors(vertical: true, open: false), .editorial, fx: .softBlur, ease: .cinematic)
 
         // --- Мягкий свет ---
         add("Чёрная пауза", .dipHold(deepBlack, hold: 0.18), .luxeLight, fx: .none, ease: .silk)
@@ -527,8 +527,8 @@ enum TransitionCatalog {
         add("Плавное перетекание", .rich(.flowMorph, a: 2.2, b: 0.16), .rich, fx: .none, ease: .bezierStd)
         add("Объёмный наезд", .rich(.chromaBarrel, a: 1, b: 0.7), .rich, fx: .none, ease: .bezierStd)
         add("Объёмный отъезд", .rich(.chromaBarrel, a: 0, b: 0.7), .rich, fx: .none, ease: .bezierStd)
-        add("Стремительный пролёт →", .rich(.whipPro, a: 1, b: 0), .rich, fx: .none, ease: .bezierInOut)
-        add("Стремительный пролёт ↑", .rich(.whipPro, a: 0, b: 1), .rich, fx: .none, ease: .bezierInOut)
+        add("Стремительный пролёт", .rich(.whipPro, a: 1, b: 0), .rich, fx: .none, ease: .bezierInOut)
+        add("Стремительный пролёт", .rich(.whipPro, a: 0, b: 1), .rich, fx: .none, ease: .bezierInOut)
         add("Орбита", .rich(.orbitSpin, a: 0.9, b: 1), .rich, fx: .none, ease: .bezierStd)
         add("Осколки стекла", .rich(.shardRefract, a: 6, b: 3.7), .rich, fx: .none, ease: .silk)
         add("Ударная волна", .rich(.shockwave, a: 0.09, b: 0.14), .rich, fx: .none, ease: .bezierStd)
@@ -540,7 +540,7 @@ enum TransitionCatalog {
         add("Глубина кадра", .rich(.depthParallax, a: 0.07, b: 1), .rich, fx: .none, ease: .bezierStd)
         add("Живая засветка", .rich(.lightLeak, a: 1.8, b: 1.0), .rich, fx: .none, ease: .bezierStd)
         add("Водная гладь", .rich(.aquaRefract, a: 6, b: 0.03), .rich, fx: .none, ease: .bezierStd)
-        add("Круговой взмах ↻", .rich(.radialSweep, a: 0.08, b: .pi / 2), .rich, fx: .none, ease: .bezierInOut)
+        add("Круговой взмах", .rich(.radialSweep, a: 0.08, b: .pi / 2), .rich, fx: .none, ease: .bezierInOut)
         add("Перевод фокуса", .rich(.bokehRack, a: 0.045, b: 2.5), .rich, fx: .none, ease: .bezierStd)
 
         return list
