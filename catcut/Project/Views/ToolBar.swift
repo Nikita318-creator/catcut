@@ -11,7 +11,7 @@ import SnapKit
 // =====================================================================
 
 enum EditorTool: CaseIterable {
-    case addVideo, overlay, split, delete, duplicate, speed, filter, adjust, transition, animation, effects, frame, background, text, audio
+    case addVideo, overlay, split, delete, duplicate, speed, filter, adjust, retouch, transition, animation, effects, frame, background, text, audio
 
     var title: String {
         switch self {
@@ -30,6 +30,7 @@ enum EditorTool: CaseIterable {
         case .background: return "Фон"
         case .text: return "Текст"
         case .audio: return "Аудио"
+        case .retouch: return "Ретушь"
         }
     }
 
@@ -50,6 +51,7 @@ enum EditorTool: CaseIterable {
         case .background: return "person.crop.square"
         case .text: return "textformat"
         case .audio: return "music.note"
+        case .retouch: return "face.smiling"
         }
     }
 }

@@ -62,7 +62,8 @@ struct VideoClip {
     var filterIntensity: Float = 1.0
     var adjust = Adjustments()            // ручная настройка поверх фильтра
     var look: Int = 0                     // живой эффект (VideoLook)
-
+    var retouch = RetouchSettings()
+    
     // Геометрия
     var flipH = false
     var flipV = false

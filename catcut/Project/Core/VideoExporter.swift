@@ -44,6 +44,7 @@ final class VideoExporter {
                 completion: @escaping (Result<URL, Error>) -> Void) {
 
         let videoComposition = build.makeVideoComposition(clips: clips, texts: texts, overlays: overlays, filterOverlays: filterOverlays, project: project)
+        RetouchStore.shared.blocking = true
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("edit_\(UUID().uuidString).mp4")
         try? FileManager.default.removeItem(at: url)
 
@@ -66,6 +67,7 @@ final class VideoExporter {
 
         s.exportAsynchronously { [weak self] in
             DispatchQueue.main.async {
+                RetouchStore.shared.blocking = false
                 self?.timer?.invalidate()
                 self?.timer = nil
                 self?.session = nil

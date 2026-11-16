@@ -51,6 +51,7 @@ extension ViewController {
         case .background: refreshBackgroundPanel(keepScroll)
         case .text: refreshTextPanel(keepScroll: keepScroll)
         case .audio: refreshAudioPanel(keepScroll)
+        case .retouch: refreshRetouchPanel(keepScroll)
         }
         if activePanel != nil { setBottomHeight(panelOverlayHeight) }
     }
@@ -244,6 +245,7 @@ extension ViewController {
         case .adjust?: applyAdjustToAll()
         case .effects?: applyEffectsToAll()
         case .text?: applyTextStyleToAll()
+        case .retouch?: applyRetouchToAll()
         default: break
         }
     }
@@ -676,6 +678,7 @@ extension ViewController {
         case .background: handleBackgroundSelect(index)
         case .text: handleTextPanel(index)
         case .audio: handleAudioSelect(index)
+        case .retouch: handleRetouchSelect(index)
         }
     }
 
@@ -684,7 +687,7 @@ extension ViewController {
     func sliderBegan() {
         switch activePanel {
         case .text?: if selectedTextID != nil { pushUndo() }
-        case .audio?, .speed?, .filter?, .transition?, .adjust?, .effects?, .animation?: pushUndo()
+        case .audio?, .speed?, .filter?, .transition?, .adjust?, .effects?, .animation?, .retouch?: pushUndo()
         default: break
         }
     }
@@ -750,6 +753,7 @@ extension ViewController {
             guard let i = currentClipIndex() else { return }
             clips[i].bgDepthThreshold = v
             refreshVideoComposition()
+        case .retouch?: retouchSliderChanged(v)
         default: break
         }
     }

@@ -228,7 +228,11 @@ final class EditorBuild {
                              custom: adjust, look: VideoLook(rawValue: c.look) ?? .none,
                              flipH: c.flipH, flipV: c.flipV, rotation: c.rotation, zoom: c.zoom,
                              bgMode: c.bgMode, bgImage: bgImg, bgColor: bgCol,
-                             bgDepthThreshold: c.bgDepthThreshold)
+                             bgDepthThreshold: c.bgDepthThreshold, retouch: c.retouch,
+                             retouchTrack: c.retouch.isIdentity ? nil : RetouchStore.shared.track(for: c),
+                             clipStart: layout.starts[safeIdx].secs,
+                             sourceStart: c.sourceRange.start.secs,
+                             speed: Double(c.speed))
         }
         
         let info = ProjectInfo(fillMode: project.fillMode, blurBackground: project.blurBackground,

@@ -59,6 +59,7 @@ extension ViewController {
             let picker = PHPickerViewController(configuration: config)
             picker.delegate = self
             present(picker, animated: true)
+        case .retouch: openClipPanel(.retouch)
         }
     }
 

@@ -35,6 +35,7 @@ struct DraftClip: Codable {
     var audioEffect: Int?
     var fadeIn: Double?
     var fadeOut: Double?
+    var retouch: RetouchSettings?
 }
 
 struct DraftAudio: Codable {
@@ -59,7 +60,8 @@ struct Draft: Codable {
     var audios: [DraftAudio]
     var project: ProjectSettings?
     var isAutoSaved: Bool?
-    var overlays: [VideoOverlay]?  
+    var overlays: [VideoOverlay]?
+    var filterOverlays: [FilterOverlay]?   
 }
 
 final class DraftStore {

@@ -25,6 +25,11 @@ struct LayerInfo {
     let bgImage: CIImage?
     let bgColor: CIColor?
     let bgDepthThreshold: Float
+    let retouch: RetouchSettings
+    let retouchTrack: RetouchTrack?
+    let clipStart: Double
+    let sourceStart: Double
+    let speed: Double
 }
 
 struct ProjectInfo {
@@ -388,6 +393,13 @@ final class EditorCompositor: NSObject, AVVideoCompositing {
         let e0 = img.extent
         img = img.transformed(by: CGAffineTransform(translationX: -e0.origin.x, y: -e0.origin.y))
 
+        // Ретушь: на целом ориентированном кадре, ДО обрезки/фильтров (координаты Vision нормализованы к кадру)
+        if !layer.retouch.isIdentity {
+            let srcT = layer.sourceStart + max(0, time - layer.clipStart) * layer.speed
+            img = RetouchRenderer.apply(layer.retouch, to: img, track: layer.retouchTrack,
+                                        sourceTime: srcT, context: EditorCompositor.ciContext)
+        }
+        
         // Обрезка краёв (кадрирование): режем исходник, разрешение = размер обрезанной области
         if let c = project.crop {
             let e = img.extent

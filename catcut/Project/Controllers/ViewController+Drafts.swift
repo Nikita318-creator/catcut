@@ -25,7 +25,9 @@ extension ViewController {
                           transitionDuration: c.transitionDuration, volume: c.volume,
                           isImage: c.isImage, adjust: c.adjust, look: c.look, flipH: c.flipH, flipV: c.flipV,
                           rotation: c.rotation, zoom: c.zoom, bgMode: c.bgMode, bgFile: c.bgFile, bgColor: c.bgColor,
-                          bgDepthThreshold: c.bgDepthThreshold, audioEffect: c.audioEffect, fadeIn: c.fadeIn, fadeOut: c.fadeOut)
+                          bgDepthThreshold: c.bgDepthThreshold, audioEffect: c.audioEffect,
+                          fadeIn: c.fadeIn, fadeOut: c.fadeOut,
+                          retouch: c.retouch.isIdentity ? nil : c.retouch)
             },
             texts: texts,
             audios: audios.map { a in
@@ -34,7 +36,8 @@ extension ViewController {
             },
             project: project,
             isAutoSaved: isAuto,
-            overlays: overlays
+            overlays: overlays,
+            filterOverlays: filterOverlays
         )
         return draft
     }
@@ -90,7 +93,8 @@ extension ViewController {
     func newProject() {
         pausePlayback()
         closePanel()
-        clips = []; texts = []; audios = []; overlays = []
+        clips = []; texts = []; audios = []; overlays = []; filterOverlays = []
+        selectedFilterOverlayID = nil
         project = ProjectSettings()
         clearSelection()
         focusLane = .video
@@ -131,6 +135,7 @@ extension ViewController {
             clip.audioEffect = c.audioEffect ?? 0
             clip.fadeIn = c.fadeIn ?? 0
             clip.fadeOut = c.fadeOut ?? 0
+            clip.retouch = c.retouch ?? RetouchSettings()
             loadedClips.append(clip)
         }
         var loadedAudios: [AudioClip] = []
@@ -155,6 +160,8 @@ extension ViewController {
         texts = d.texts
         audios = loadedAudios
         overlays = loadedOverlays
+        filterOverlays = d.filterOverlays ?? []
+        selectedFilterOverlayID = nil
         project = d.project ?? ProjectSettings()
         clearSelection()
         focusLane = .video

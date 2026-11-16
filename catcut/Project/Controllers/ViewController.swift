@@ -15,7 +15,7 @@ import SnapKit
 
 final class ViewController: UIViewController {
 
-    enum PanelKind { case speed, filter, adjust, transition, animation, effects, frame, background, text, audio }
+    enum PanelKind { case speed, filter, adjust, retouch, transition, animation, effects, frame, background, text, audio }
     enum PickerPurpose { case clips, bgPhoto, audioFromVideo, overlay }
     
     enum TextTab: Int, CaseIterable {
@@ -111,6 +111,8 @@ final class ViewController: UIViewController {
     var frameTab = 0
     var fxTab = 0
     var audioTab = 0
+    var retouchTab = 0
+    var retouchParam = 0
     var animTab = 0
     var processingKeys = Set<String>()
     var filterPreviewClipID: UUID?
@@ -535,6 +537,7 @@ final class ViewController: UIViewController {
             case .effects?: self.fxTab = index
             case .audio?: self.audioTab = index
             case .animation?: self.animTab = index
+            case .retouch?: self.retouchTab = index; self.retouchParam = 0
             default: break
             }
             self.refreshActivePanel(keepScroll: false)
@@ -572,6 +575,7 @@ final class ViewController: UIViewController {
             }
         }
         
+        setupRetouch()
         ThumbnailStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
         WaveformStore.shared.onUpdate = { [weak self] in self?.reloadTimelineWhenIdle() }
     }
@@ -738,12 +742,10 @@ final class ViewController: UIViewController {
 
     /// Всё, что живёт «под видео», обязано укладываться в длину видео.
     func clampOverlays(total: Double) {
-        guard !clips.isEmpty else { texts = []; audios = []; overlays = []; selectedOverlayID = nil; return }
-        texts = texts.map { o in
-            var o = o
-            o.start = max(0, min(o.start, total - 0.3))
-            o.duration = max(0.1, min(o.duration, total - o.start))
-            return o
+        guard !clips.isEmpty else {
+            texts = []; audios = []; overlays = []; filterOverlays = []
+            selectedOverlayID = nil; selectedFilterOverlayID = nil
+            return
         }
         audios = audios.compactMap { a in
             var a = a
@@ -759,6 +761,13 @@ final class ViewController: UIViewController {
             o.duration = max(0.1, min(o.duration, total - o.start))
             return o
         }
+        filterOverlays = filterOverlays.map { f in
+            var f = f
+            f.start = max(0, min(f.start, total - 0.3))
+            f.duration = max(0.1, min(f.duration, total - f.start))
+            return f
+        }
+        if let id = selectedFilterOverlayID, !filterOverlays.contains(where: { $0.id == id }) { selectedFilterOverlayID = nil }
         if let id = selectedOverlayID, !overlays.contains(where: { $0.id == id }) { selectedOverlayID = nil }
         if let id = selectedTextID, !texts.contains(where: { $0.id == id }) { selectedTextID = nil }
         if let id = selectedAudioID, !audios.contains(where: { $0.id == id }) { selectedAudioID = nil }
@@ -820,6 +829,7 @@ final class ViewController: UIViewController {
         timelineView.setPlayhead(time: t.secs, force: true)
         updateTextBox()
         ensureProcessedAudio()
+        ensureRetouchForAllClips()
     }
     
     /// Лёгкое обновление (фильтры, текст, оверлеи): композиция та же, меняем только инструкции.
@@ -887,6 +897,7 @@ final class ViewController: UIViewController {
         texts = s.texts
         audios = s.audios
         overlays = s.overlays
+        filterOverlays = s.filterOverlays
         project = s.project
         clearSelection()
         filterPreviewClipID = nil
@@ -904,6 +915,7 @@ final class ViewController: UIViewController {
         texts = s.texts
         audios = s.audios
         overlays = s.overlays
+        filterOverlays = s.filterOverlays
         project = s.project
         clearSelection()
         filterPreviewClipID = nil
@@ -919,6 +931,7 @@ final class ViewController: UIViewController {
         selectedTextID = nil
         selectedAudioID = nil
         selectedOverlayID = nil
+        selectedFilterOverlayID = nil
     }
 
     func currentClipIndex() -> Int? {
@@ -1003,7 +1016,8 @@ final class ViewController: UIViewController {
     }
 
     func ensureSelection() {
-        if selectedClipIndex == nil, selectedTextID == nil, selectedAudioID == nil, selectedOverlayID == nil, let i = currentClipIndex() {
+        if selectedClipIndex == nil, selectedTextID == nil, selectedAudioID == nil,
+           selectedOverlayID == nil, selectedFilterOverlayID == nil, let i = currentClipIndex() {
             selectedClipIndex = i
             if clips.count > 1 { transitionBoundary = min(i, clips.count - 2) }
             reloadTimeline()
